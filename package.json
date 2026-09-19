@@ -1,0 +1,31 @@
+{
+  "name": "pi-crm-inspector",
+  "version": "3.1.0",
+  "description": "Isolated read-only CRM inspector for pi.dev",
+  "type": "module",
+  "private": true,
+  "keywords": ["pi-package"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": ["./dispatcher/index.ts"]
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.3",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test"
+  }
+}
