@@ -196,13 +196,30 @@ export function scrubSecrets(text: string, secrets: readonly string[]): string {
     if (secret.length > 0) value = value.split(secret).join("[REDACTED]");
   }
 
+  // Decode common HTML entities to catch encoded secrets
+  const decoded = value
+    .replace(/&#61;/gi, "=")
+    .replace(/&#x3d;/gi, "=")
+    .replace(/&#91;/gi, "[")
+    .replace(/&#93;/gi, "]")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
   value = value.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]");
   value = value.replace(/\bBasic\s+[A-Za-z0-9+/=]+/gi, "Basic [REDACTED]");
   value = value.replace(
     /(password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*(['"]?)[^,'"\s}]+\2/gi,
     "$1=[REDACTED]",
   );
+  // Also catch HTML-encoded key=value patterns
+  value = value.replace(
+    /(password|passwd|secret|token|api[_-]?key|authorization)\s*(?:&#61;|&#x3d;|&#=:)\s*(['"]?)[^,'"\s}]+\2/gi,
+    "$1=[REDACTED]",
+  );
+  // Redact URLs with query params containing potential secrets
   value = value.replace(/https?:\/\/[^\s]+/gi, (candidate) => sanitizedUrl(candidate));
+  // Clean up any HTML entity encoded URLs that might have slipped through
+  value = value.replace(/https?:\/\/[^\s]+&#[^\s]+/gi, () => "[REDACTED_URL]");
 
   return value;
 }

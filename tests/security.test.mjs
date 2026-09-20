@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.ts";
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
-import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy } from "../inspector/security.ts";
+import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedDocumentUrl } from "../inspector/security.ts";
+import { buildChildEnv, extractChildToolResult } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
   assert.equal(normalizedOrigin(CRM_POLICY.origin), CRM_POLICY.origin);
@@ -53,4 +54,100 @@ test("protocol guard accepts only valid results", () => {
   assert.equal(isInspectResult({ status: "blocked", ...base, reason: "external_redirect" }), true);
   assert.equal(isInspectResult({ status: "error", traceId: "trace", pageId: "dashboard", durationMs: 1, code: "timeout", message: "x", securityEvents: [] }), true);
   assert.throws(() => asInspectResult({ status: "success" }));
+});
+
+// ===== Adversarial / Regression Tests =====
+
+test("protocol — two tool_execution_end events → extractChildToolResult throws", () => {
+  const fakeStdout = `
+{"type":"tool_execution_end","toolName":"inspect_crm_page","result":{"details":{"status":"success","traceId":"t1","pageId":"dashboard","durationMs":1,"console":[],"pageErrors":[],"requestFailures":[],"securityEvents":[],"droppedEvents":0}}}
+{"type":"tool_execution_end","toolName":"inspect_crm_page","result":{"details":{"status":"success","traceId":"t2","pageId":"dashboard","durationMs":1,"console":[],"pageErrors":[],"requestFailures":[],"securityEvents":[],"droppedEvents":0}}}
+`;
+  assert.throws(() => extractChildToolResult(fakeStdout, "dashboard", false));
+});
+
+test("stdout overflow → throws", () => {
+  const fakeStdout = "x".repeat(1000); // any content
+  assert.throws(() => extractChildToolResult(fakeStdout, "dashboard", true));
+});
+
+test("malformed details (no status/pageId) → asInspectResult throws", () => {
+  assert.throws(() => asInspectResult({}));
+  assert.throws(() => asInspectResult({ traceId: "x", pageId: "dashboard", durationMs: 0, console: [], pageErrors: [], requestFailures: [], securityEvents: [], droppedEvents: 0 }));
+});
+
+test("env dangerous vars — copyEnv must NOT pass NODE_OPTIONS (test via regex)", () => {
+  // Save original
+  const originalNodeOptions = process.env.NODE_OPTIONS;
+  try {
+    process.env.NODE_OPTIONS = "--require ./evil.js";
+    const childEnv = buildChildEnv();
+    assert.strictEqual(childEnv.NODE_OPTIONS, undefined, "NODE_OPTIONS must not be passed to child environment");
+  } finally {
+    // Restore
+    if (originalNodeOptions !== undefined) {
+      process.env.NODE_OPTIONS = originalNodeOptions;
+    } else {
+      delete process.env.NODE_OPTIONS;
+    }
+  }
+});
+
+test("CHILD_GUARD_ENV — inspector throws if env not set", async () => {
+  const mockPi = {
+    registerTool: (name, opts) => {
+      if (name === "inspect_crm_page") {
+        mockPi.execute = opts.execute;
+      }
+    }
+  };
+  // Unset CHILD_GUARD_ENV — must throw on default export call
+  delete process.env.PI_CRM_INSPECTOR_CHILD;
+  const inspector = await import("../inspector/index.ts");
+  assert.throws(() => inspector.default(mockPi), /child-only and may only be loaded by the CRM dispatcher/);
+});
+
+test("second invocationUsed → second call returns error with terminate:true", async () => {
+  process.env.PI_CRM_INSPECTOR_CHILD = "1";
+  const mockPi = {
+    registerTool: (name, opts) => {
+      if (name === "inspect_crm_page") {
+        mockPi.execute = opts.execute;
+      }
+    }
+  };
+  const inspector = await import("../inspector/index.ts");
+  inspector.default(mockPi);
+  const result1 = await mockPi.execute(null, { page_id: "dashboard" }, {});
+  const result2 = await mockPi.execute(null, { page_id: "dashboard" }, {});
+  assert.equal(result2.terminate, true);
+  assert.equal(result2.isError, true);
+  assert.equal(result2.details.status, "error");
+  assert.equal(result2.details.code, "browser_error");
+  assert.equal(result2.details.message, "This CRM inspector child session permits exactly one inspection call.");
+});
+
+test("query allowlist — isAllowedQuery rejects unknown keys", () => {
+  assert.equal(isAllowedQuery("?page=1&unknown=2", { allowedKeys: ["page"] }), false);
+  assert.equal(isAllowedQuery("?unknown=1", { allowedKeys: ["page"] }), false);
+  assert.equal(isAllowedQuery("?page=1&sort=asc", { allowedKeys: ["page", "sort"] }), true);
+});
+
+test("path allowlist — isAllowedPath rejects unknown paths", () => {
+  const allowed = ["/api/dashboard/summary", "/api/billing/logs"];
+  assert.equal(isAllowedPath("/api/dashboard/unknown", allowed), false);
+  assert.equal(isAllowedPath("/api/billing/unknown", allowed), false);
+  assert.equal(isAllowedPath("/api/dashboard/summary", allowed), true);
+});
+
+test("URL credentials — isAllowedDocumentUrl rejects url with username/password", () => {
+  const allowedDocs = ["https://crm.example.internal/dashboard"];
+  assert.equal(isAllowedDocumentUrl("https://user:pass@crm.example.internal/dashboard", allowedDocs), false);
+  assert.equal(isAllowedDocumentUrl("https://crm.example.internal/dashboard", allowedDocs), true);
+});
+
+test("non-https — normalizedOrigin throws for http", () => {
+  assert.throws(() => normalizedOrigin("http://crm.example.internal"));
+  assert.throws(() => normalizedOrigin("http://crm.example.internal/"));
+  assert.doesNotThrow(() => normalizedOrigin("https://crm.example.internal"));
 });

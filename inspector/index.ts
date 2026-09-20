@@ -149,8 +149,20 @@ async function closeContextAndBrowser(
   context: BrowserContext | undefined,
   browser: Browser | undefined,
 ): Promise<void> {
-  await context?.close().catch(() => undefined);
-  await browser?.close().catch(() => undefined);
+  const closeWithTimeout = async (obj: { close(): Promise<void> } | undefined, label: string): Promise<void> => {
+    if (!obj) return;
+    try {
+      await Promise.race([
+        obj.close(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label}.close() timed out`)), 5_000)),
+      ]);
+    } catch {
+      // Best effort close — ignore errors
+    }
+  };
+
+  await closeWithTimeout(context, "context");
+  await closeWithTimeout(browser, "browser");
 }
 
 async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promise<InspectResult> {
@@ -221,7 +233,7 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
 
   const registerServerCheck = (promise: Promise<void>) => {
     pendingServerChecks.add(promise);
-    void promise.finally(() => pendingServerChecks.delete(promise));
+    promise.finally(() => pendingServerChecks.delete(promise)).catch(() => undefined);
   };
 
   try {

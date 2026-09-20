@@ -58,7 +58,7 @@ function copyEnv(child: NodeJS.ProcessEnv, source: NodeJS.ProcessEnv, name: stri
   if (source[name] !== undefined) child[name] = source[name];
 }
 
-function buildChildEnv(): NodeJS.ProcessEnv {
+export function buildChildEnv(): NodeJS.ProcessEnv {
   const source = process.env;
   const child: NodeJS.ProcessEnv = {};
   const base = [
@@ -81,9 +81,13 @@ function buildChildEnv(): NodeJS.ProcessEnv {
     copyEnv(child, source, name);
   }
 
+  // Pass parent trace ID to child for trace linkage
+  copyEnv(child, source, CHILD_PARENT_TRACE_ENV);
+
   const extra = source.PI_CRM_CHILD_ENV_ALLOWLIST?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
   for (const name of extra) {
     if (/^(NODE_OPTIONS|NODE_PATH|LD_PRELOAD|DYLD_|BASH_ENV|ENV)$/i.test(name)) continue;
+    if (!name || name.length === 0) continue;
     copyEnv(child, source, name);
   }
 
@@ -91,28 +95,56 @@ function buildChildEnv(): NodeJS.ProcessEnv {
   return child;
 }
 
-function terminateProcessTree(child: ChildProcess): void {
-  const pid = child.pid;
-  if (!pid) return;
-  if (process.platform === "win32") {
-    const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    killer.unref();
-    return;
-  }
-  try { process.kill(-pid, "SIGTERM"); }
-  catch { try { child.kill("SIGTERM"); } catch { /* already exited */ } }
+async function waitForExit(child: ChildProcess, maxWaitMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve(true);
+      return;
+    }
+    const timer = setTimeout(() => resolve(false), maxWaitMs);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    child.once("error", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
 }
 
-function hardKillProcessTree(child: ChildProcess): void {
+async function terminateProcessTree(child: ChildProcess): Promise<void> {
   const pid = child.pid;
   if (!pid) return;
   if (process.platform === "win32") {
     const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
     killer.unref();
-    return;
+  } else {
+    try { process.kill(-pid, "SIGTERM"); }
+    catch { try { child.kill("SIGTERM"); } catch { /* already exited */ } }
   }
-  try { process.kill(-pid, "SIGKILL"); }
-  catch { try { child.kill("SIGKILL"); } catch { /* already exited */ } }
+  const exited = await waitForExit(child, 2_000);
+  if (!exited) {
+    await hardKillProcessTree(child);
+  }
+}
+
+async function hardKillProcessTree(child: ChildProcess): Promise<void> {
+  const pid = child.pid;
+  if (!pid) return;
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    killer.unref();
+  } else {
+    try { process.kill(-pid, "SIGKILL"); }
+    catch { try { child.kill("SIGKILL"); } catch { /* already exited */ } }
+  }
+  // Best-effort verification for SIGKILL; on Unix SIGKILL cannot be caught
+  if (child.pid) {
+    try { process.kill(child.pid, 0); } catch { return; }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try { process.kill(child.pid, 0); } catch { return; }
+  }
 }
 
 type ChildExecution = {
@@ -198,16 +230,18 @@ async function runChild(pageId: PageId, signal?: AbortSignal): Promise<ChildExec
         });
       };
 
-      const terminate = (kind: "timeout" | "abort" | "protocol") => {
+      const terminate = async (kind: "timeout" | "abort" | "protocol") => {
         if (settled || killerStarted) return;
         killerStarted = true;
         if (kind === "timeout") timedOut = true;
         if (kind === "abort") aborted = true;
-        terminateProcessTree(child);
-        termTimer = setTimeout(() => hardKillProcessTree(child), CHILD_KILL_GRACE_MS);
+        try { await terminateProcessTree(child); } catch { /* best effort */ }
+        termTimer = setTimeout(async () => {
+          try { await hardKillProcessTree(child); } catch { /* best effort */ }
+        }, CHILD_KILL_GRACE_MS);
       };
 
-      const onAbort = () => terminate("abort");
+      const onAbort = async () => { try { await terminate("abort"); } catch { /* best effort */ } };
 
       child.stdout.on("data", (chunk: Buffer | string) => {
         if (stdout.length >= MAX_CHILD_STDOUT) {
@@ -234,8 +268,9 @@ async function runChild(pageId: PageId, signal?: AbortSignal): Promise<ChildExec
 
       child.once("error", (error) => {
         if (settled) return;
-        terminateProcessTree(child);
+        settled = true;
         cleanup();
+        try { void terminateProcessTree(child); } catch { /* best effort */ }
         reject(error);
       });
       child.once("close", (code, closeSignal) => finish(code ?? 1, closeSignal));
@@ -249,7 +284,7 @@ async function runChild(pageId: PageId, signal?: AbortSignal): Promise<ChildExec
   }
 }
 
-function extractChildToolResult(stdout: string, expectedPageId: PageId, overflow: boolean): InspectResult {
+export function extractChildToolResult(stdout: string, expectedPageId: PageId, overflow: boolean): InspectResult {
   if (overflow) throw new Error("Child stdout exceeded the protocol safety limit");
 
   let toolExecutionCount = 0;
@@ -264,8 +299,10 @@ function extractChildToolResult(stdout: string, expectedPageId: PageId, overflow
     toolExecutionCount++;
     if (toolExecutionCount === 1) {
       const result = row.result;
-      if (!result || typeof result !== "object") throw new Error("Child tool event has no result object");
-      found = (result as Record<string, unknown>).details;
+      if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("Child tool event has no result object");
+      const resultRecord = result as Record<string, unknown>;
+      if (!resultRecord.details || typeof resultRecord.details !== "object" || resultRecord.details === null || Array.isArray(resultRecord.details)) throw new Error("Child result details must be an object");
+      found = resultRecord.details;
     }
   }
 
@@ -289,6 +326,8 @@ export default function (pi: ExtensionAPI) {
     executionMode: "sequential",
     parameters: Type.Object({ page_id: PageIdSchema }),
     async execute(_toolCallId, params, signal) {
+      // Set parent trace ID for child process trace linkage
+      process.env[CHILD_PARENT_TRACE_ENV] = randomUUID();
       const execution = await runChild(params.page_id, signal);
       if (execution.timedOut) throw new Error(`CRM inspector child timed out after ${CHILD_TIMEOUT_MS} ms (trace=${execution.invocationTraceId})`);
       if (execution.aborted) throw new Error(`CRM inspector child aborted (trace=${execution.invocationTraceId})`);

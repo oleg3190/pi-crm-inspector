@@ -116,6 +116,14 @@ function isFiniteNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && Number.isInteger(value);
 }
 
+const MAX_TRACE_ID_LENGTH = 128;
+const MAX_ERROR_MESSAGE_LENGTH = 2048;
+const MAX_LOG_TEXT_LENGTH = 8192;
+
+function isBoundedString(value: unknown, maxLen: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLen;
+}
+
 function isSecurityEvent(value: unknown): value is SecurityEvent {
   if (!value || typeof value !== "object") return false;
   const event = value as Record<string, unknown>;
@@ -171,16 +179,15 @@ function isRequestFailure(value: unknown): value is RequestFailure {
 }
 
 function isCommonResultFields(value: Record<string, unknown>): boolean {
-  return (
-    typeof value.traceId === "string" && value.traceId.length > 0 &&
-    isPageId(value.pageId) &&
-    isFiniteNonNegativeInteger(value.durationMs) &&
-    Array.isArray(value.console) && value.console.every(isConsoleLog) &&
-    Array.isArray(value.pageErrors) && value.pageErrors.every(isPageError) &&
-    Array.isArray(value.requestFailures) && value.requestFailures.every(isRequestFailure) &&
-    Array.isArray(value.securityEvents) && value.securityEvents.every(isSecurityEvent) &&
-    isFiniteNonNegativeInteger(value.droppedEvents)
-  );
+  if (!isPageId(value.pageId)) return false;
+  if (!isFiniteNonNegativeInteger(value.durationMs)) return false;
+  if (!Array.isArray(value.console) || !value.console.every(isConsoleLog)) return false;
+  if (!Array.isArray(value.pageErrors) || !value.pageErrors.every(isPageError)) return false;
+  if (!Array.isArray(value.requestFailures) || !value.requestFailures.every(isRequestFailure)) return false;
+  if (!Array.isArray(value.securityEvents) || !value.securityEvents.every(isSecurityEvent)) return false;
+  if (!isFiniteNonNegativeInteger(value.droppedEvents)) return false;
+  if (value.console.length > 100 || value.pageErrors.length > 50 || value.requestFailures.length > 50 || value.securityEvents.length > 20) return false;
+  return true;
 }
 
 export function isInspectResult(value: unknown): value is InspectResult {
@@ -191,11 +198,11 @@ export function isInspectResult(value: unknown): value is InspectResult {
   if (result.status === "blocked") return isCommonResultFields(result) && isBlockReason(result.reason);
 
   if (result.status === "error") {
-    if (typeof result.traceId !== "string" || result.traceId.length === 0) return false;
+    if (typeof result.traceId !== "string" || !isBoundedString(result.traceId, MAX_TRACE_ID_LENGTH)) return false;
     if (!(result.pageId === undefined || isPageId(result.pageId))) return false;
     if (!isFiniteNonNegativeInteger(result.durationMs)) return false;
     if (!isErrorCode(result.code)) return false;
-    if (typeof result.message !== "string") return false;
+    if (typeof result.message !== "string" || !isBoundedString(result.message, MAX_ERROR_MESSAGE_LENGTH)) return false;
     return Array.isArray(result.securityEvents) && result.securityEvents.every(isSecurityEvent);
   }
 
