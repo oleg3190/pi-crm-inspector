@@ -21,6 +21,8 @@ import {
   validatePageConfig,
   validatePinnedIp,
   validateQueryPolicy,
+  getPinnedIpForOrigin,
+  isTrustedOrigin,
 } from "./security.ts";
 import type {
   ConsoleLog,
@@ -35,9 +37,7 @@ import type {
 
 const TOOL_NAME = "inspect_crm_page" as const;
 const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
-const ORIGIN = normalizedOrigin(CRM_POLICY.origin);
 const LOGIN_URL = new URL(CRM_POLICY.login.url);
-const PINNED_IP = CRM_POLICY.pinnedIp;
 const PageIdSchema = StringEnum(PAGE_IDS, { description: "Fixed CRM page identifier." });
 
 type CaptureBucket = "console" | "pageErrors" | "requestFailures";
@@ -47,10 +47,13 @@ type InspectorPhase = "login" | "authenticated";
 const username = () => process.env.PI_CRM_USERNAME ?? "";
 const password = () => process.env.PI_CRM_PASSWORD ?? "";
 
-function buildHostResolverRules(): string {
-  const hostname = new URL(CRM_POLICY.origin).hostname;
-  const target = PINNED_IP.includes(":") ? `[${PINNED_IP}]` : PINNED_IP;
-  return `MAP ${hostname} ${target}, MAP * ~NOTFOUND`;
+export function buildHostResolverRules(): string {
+  const mappings = CRM_POLICY.trustedOrigins.map(({ origin, pinnedIp }) => {
+    const hostname = new URL(origin).hostname;
+    const target = pinnedIp.includes(":") ? `[${pinnedIp}]` : pinnedIp;
+    return `MAP ${hostname} ${target}`;
+  });
+  return `${mappings.join(", ")}, MAP * ~NOTFOUND`;
 }
 
 function combineSignals(externalSignal: AbortSignal | undefined, securitySignal: AbortSignal): AbortSignal {
@@ -80,17 +83,25 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
 
 function requireConfiguration(): void {
   try {
-    validatePinnedIp(PINNED_IP);
-    const origin = normalizedOrigin(CRM_POLICY.origin);
-    if (origin !== ORIGIN) throw new Error("CRM origin normalization mismatch");
-    if (LOGIN_URL.origin !== ORIGIN) throw new Error("Login URL must have exactly the same origin as CRM origin");
+    const normalizedOrigins = CRM_POLICY.trustedOrigins.map(({ origin }) => normalizedOrigin(origin));
+    if (new Set(normalizedOrigins).size !== normalizedOrigins.length) {
+      throw new Error("Trusted origins must be unique");
+    }
+    for (const trusted of CRM_POLICY.trustedOrigins) {
+      const origin = normalizedOrigin(trusted.origin);
+      if (origin !== trusted.origin) throw new Error(`Trusted origin must be normalized: ${trusted.origin}`);
+      validatePinnedIp(trusted.pinnedIp);
+    }
+    if (!isTrustedOrigin(LOGIN_URL.origin)) {
+      throw new Error("Login URL origin must be present in CRM_POLICY.trustedOrigins");
+    }
     if (LOGIN_URL.username || LOGIN_URL.password) throw new Error("Login URL must not contain credentials");
     validateQueryPolicy(CRM_POLICY.login.query);
 
     for (const pageId of PAGE_IDS) {
       const page = getPageConfig(pageId);
       const pageUrl = new URL(page.url);
-      if (pageUrl.origin !== ORIGIN) throw new Error(`Page ${pageId} is outside the CRM origin`);
+      if (!isTrustedOrigin(pageUrl.origin)) throw new Error(`Page ${pageId} is outside the trusted origins`);
       if (!isAllowedDocumentUrl(page.url, page.allowedDocuments)) {
         throw new Error(`Page ${pageId} does not allow its target document`);
       }
@@ -375,12 +386,24 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
           return;
         }
 
-        if (server.ipAddress !== PINNED_IP) {
+        const responseOrigin = (() => {
+          try { return new URL(response.url()).origin; } catch { return ""; }
+        })();
+        const pinnedIp = getPinnedIpForOrigin(responseOrigin);
+        if (!pinnedIp) {
+          triggerBlock("external_origin", {
+            kind: "blocked_request",
+            url: sanitizedUrl(response.url()),
+            reason: "external_origin",
+          });
+          return;
+        }
+        if (server.ipAddress !== pinnedIp) {
           triggerBlock("unexpected_server_ip", {
             kind: "unexpected_server_ip",
             url: sanitizedUrl(response.url()),
             reason: "unexpected_server_ip",
-            detail: `server_ip=${server.ipAddress}`,
+            detail: `server_ip=${server.ipAddress}, expected=${pinnedIp}`,
           });
         }
       })();
