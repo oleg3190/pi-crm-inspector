@@ -12,21 +12,21 @@ export type RequestDecision =
   | { allowed: true }
   | { allowed: false; reason: BlockReason };
 
-function trustedOriginConfig(origin: string) {
+function trustedOriginConfig(origin: string, trustedOrigins = CRM_POLICY.trustedOrigins) {
   try {
     const normalized = normalizedOrigin(origin);
-    return CRM_POLICY.trustedOrigins.find((item) => normalizedOrigin(item.origin) === normalized);
+    return trustedOrigins.find((item) => normalizedOrigin(item.origin) === normalized);
   } catch {
     return undefined;
   }
 }
 
-export function isTrustedOrigin(origin: string): boolean {
-  return trustedOriginConfig(origin) !== undefined;
+export function isTrustedOrigin(origin: string, trustedOrigins = CRM_POLICY.trustedOrigins): boolean {
+  return trustedOriginConfig(origin, trustedOrigins) !== undefined;
 }
 
-export function getPinnedIpForOrigin(origin: string): string | undefined {
-  return trustedOriginConfig(origin)?.pinnedIp;
+export function getPinnedIpForOrigin(origin: string, trustedOrigins = CRM_POLICY.trustedOrigins): string | undefined {
+  return trustedOriginConfig(origin, trustedOrigins)?.pinnedIp;
 }
 
 const FORBIDDEN_GENERIC_WILDCARDS = new Set(["/*", "/**"]);
