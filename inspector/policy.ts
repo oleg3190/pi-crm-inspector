@@ -17,9 +17,24 @@ export type PageConfig = Readonly<{
   query: QueryPolicy;
 }>;
 
+export type TrustedOrigin = Readonly<{
+  origin: string;
+  pinnedIp: string;
+}>;
+
 export const CRM_POLICY = Object.freeze({
-  origin: "https://crm.example.internal",
-  pinnedIp: "10.20.30.40",
+  // Add every HTTPS origin that the inspector may contact.
+  // Each origin must have its own pinned server IP.
+  trustedOrigins: Object.freeze([
+    Object.freeze({
+      origin: "https://crm.example.internal",
+      pinnedIp: "10.20.30.40",
+    }),
+    // Object.freeze({
+    //   origin: "https://auth.example.internal",
+    //   pinnedIp: "10.20.30.41",
+    // }),
+  ]),
 
   login: Object.freeze({
     url: "https://crm.example.internal/login",
