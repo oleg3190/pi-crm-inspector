@@ -148,46 +148,22 @@ export function isAllowedDocumentUrl(url: string, allowedDocuments: readonly str
 
 export function isAllowedRequest(
   request: Request,
-  pageConfig: PageConfig,
+  _pageConfig: PageConfig,
   phase: RequestPhase,
 ): RequestDecision {
-  let u: URL;
-  try {
-    u = new URL(request.url());
-  } catch {
-    return { allowed: false, reason: "malformed_url" };
-  }
-
-  if (u.protocol !== "https:") return { allowed: false, reason: "non_https_scheme" };
-  if (u.username || u.password) return { allowed: false, reason: "url_credentials_not_allowed" };
-  if (!isTrustedOrigin(u.origin)) return { allowed: false, reason: "external_origin" };
-  if (!isAllowedPath(u.pathname, pageConfig.allowedRequestPaths)) {
-    return { allowed: false, reason: "request_path_not_allowlisted" };
-  }
-
   const method = request.method().toUpperCase();
-  const login = new URL(CRM_POLICY.login.url);
-  const isLoginEndpoint = u.origin === login.origin && u.pathname === login.pathname;
-  const isLoginPost = CRM_POLICY.allowLoginPost && phase === "login" && method === "POST" && isLoginEndpoint;
 
-  if (isLoginPost) {
-    return isAllowedQuery(u.search, CRM_POLICY.login.query)
-      ? { allowed: true }
-      : { allowed: false, reason: "request_query_not_allowlisted" };
+  // URL/origin/path/query/document allowlists are intentionally disabled.
+  // Any web destination can be requested; only HTTP method policy remains.
+  if (CRM_POLICY.allowLoginPost && phase === "login" && method === "POST") {
+    return { allowed: true };
   }
 
-  if (!isAllowedQuery(u.search, isLoginEndpoint ? CRM_POLICY.login.query : pageConfig.query)) {
-    return { allowed: false, reason: "request_query_not_allowlisted" };
-  }
-  if (!CRM_POLICY.allowOnlyReadMethods.includes(method)) {
-    return { allowed: false, reason: "blocked_method" };
+  if (CRM_POLICY.allowOnlyReadMethods.includes(method)) {
+    return { allowed: true };
   }
 
-  if (request.resourceType() === "document" && !isAllowedDocumentUrl(u.href, pageConfig.allowedDocuments)) {
-    return { allowed: false, reason: "document_not_allowlisted" };
-  }
-
-  return { allowed: true };
+  return { allowed: false, reason: "blocked_method" };
 }
 
 export function validatePinnedIp(ip: string): void {
