@@ -273,17 +273,6 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
       await route.abort("accessdenied").catch(() => undefined);
     });
 
-    if (typeof context.routeWebSocket === "function") {
-      await context.routeWebSocket("**/*", (webSocket) => {
-        triggerBlock("blocked_websocket", {
-          kind: "blocked_websocket",
-          url: sanitizedUrl(webSocket.url()),
-          reason: "blocked_websocket",
-        });
-        webSocket.close();
-      });
-    }
-
     context.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "unknown_failure";
       const clipped = capture(
@@ -310,16 +299,6 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
     });
 
     mainPage = await withTimeout(context.newPage(), CRM_POLICY.limits.operationTimeoutMs, signal);
-
-    context.on("page", (page) => {
-      if (page === mainPage) return;
-      triggerBlock("popup_blocked", {
-        kind: "popup",
-        url: sanitizedUrl(page.url()),
-        reason: "popup_blocked",
-      });
-      void page.close().catch(() => undefined);
-    });
 
     mainPage.on("console", (message) => {
       const clipped = capture("console", message.text(), CRM_POLICY.limits.maxConsoleLogs);
