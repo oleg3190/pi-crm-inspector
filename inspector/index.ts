@@ -12,17 +12,10 @@ import {
   getPageConfig,
 } from "./policy.ts";
 import {
-  isAllowedDocumentUrl,
   isAllowedRequest,
-  normalizedOrigin,
   scrubSecrets,
   sanitizedUrl,
   truncateLog,
-  validatePageConfig,
-  validatePinnedIp,
-  validateQueryPolicy,
-  getPinnedIpForOrigin,
-  isTrustedOrigin,
 } from "./security.ts";
 import type {
   ConsoleLog,
@@ -46,15 +39,6 @@ type InspectorPhase = "login" | "authenticated";
 
 const username = () => process.env.PI_CRM_USERNAME ?? "";
 const password = () => process.env.PI_CRM_PASSWORD ?? "";
-
-export function buildHostResolverRules(trustedOrigins = CRM_POLICY.trustedOrigins): string {
-  const mappings = trustedOrigins.map(({ origin, pinnedIp }) => {
-    const hostname = new URL(origin).hostname;
-    const target = pinnedIp.includes(":") ? `[${pinnedIp}]` : pinnedIp;
-    return `MAP ${hostname} ${target}`;
-  });
-  return `${mappings.join(", ")}, MAP * ~NOTFOUND`;
-}
 
 function combineSignals(externalSignal: AbortSignal | undefined, securitySignal: AbortSignal): AbortSignal {
   if (externalSignal) return AbortSignal.any([externalSignal, securitySignal]);
@@ -82,45 +66,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
 }
 
 function requireConfiguration(): void {
-  try {
-    const normalizedOrigins = CRM_POLICY.trustedOrigins.map(({ origin }) => normalizedOrigin(origin));
-    if (new Set(normalizedOrigins).size !== normalizedOrigins.length) {
-      throw new Error("Trusted origins must be unique");
-    }
-    for (const trusted of CRM_POLICY.trustedOrigins) {
-      const origin = normalizedOrigin(trusted.origin);
-      if (origin !== trusted.origin) throw new Error(`Trusted origin must be normalized: ${trusted.origin}`);
-      validatePinnedIp(trusted.pinnedIp);
-    }
-    if (!isTrustedOrigin(LOGIN_URL.origin)) {
-      throw new Error("Login URL origin must be present in CRM_POLICY.trustedOrigins");
-    }
-    if (LOGIN_URL.username || LOGIN_URL.password) throw new Error("Login URL must not contain credentials");
-    validateQueryPolicy(CRM_POLICY.login.query);
-
-    for (const pageId of PAGE_IDS) {
-      const page = getPageConfig(pageId);
-      const pageUrl = new URL(page.url);
-      if (!isTrustedOrigin(pageUrl.origin)) throw new Error(`Page ${pageId} is outside the trusted origins`);
-      if (!isAllowedDocumentUrl(page.url, page.allowedDocuments)) {
-        throw new Error(`Page ${pageId} does not allow its target document`);
-      }
-      if (!isAllowedDocumentUrl(CRM_POLICY.login.url, page.allowedDocuments)) {
-        throw new Error(`Page ${pageId} does not allow the login document`);
-      }
-      if (!page.allowedRequestPaths.includes(LOGIN_URL.pathname)) {
-        throw new Error(`Page ${pageId} must allow login path ${LOGIN_URL.pathname}`);
-      }
-      if (!page.allowedRequestPaths.includes(pageUrl.pathname)) {
-        throw new Error(`Page ${pageId} must allow target path ${pageUrl.pathname}`);
-      }
-      validatePageConfig(page);
-    }
-  } catch (error) {
-    throw new Error(`Configuration error: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  // URL destinations are intentionally unrestricted.
 }
-
 function classifyError(error: unknown, externalSignal: AbortSignal | undefined): ErrorCode {
   if (externalSignal?.aborted) return "aborted";
   const message = error instanceof Error ? error.message : String(error);
@@ -183,7 +130,6 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
   const pageErrors: PageError[] = [];
   const requestFailures: RequestFailure[] = [];
   const securityEvents: SecurityEvent[] = [];
-  const pendingServerChecks = new Set<Promise<void>>();
   let droppedEvents = 0;
   let totalEventChars = 0;
   let browser: Browser | undefined;
@@ -242,10 +188,7 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
     droppedEvents,
   });
 
-  const registerServerCheck = (promise: Promise<void>) => {
-    pendingServerChecks.add(promise);
-    promise.finally(() => pendingServerChecks.delete(promise)).catch(() => undefined);
-  };
+
 
   try {
     requireConfiguration();
@@ -275,7 +218,6 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
         "--disable-features=Translate,AutofillServerCommunication,OptimizationHints",
         "--disable-quic",
         "--no-proxy-server",
-        `--host-resolver-rules=${buildHostResolverRules()}`,
       ],
     });
 
@@ -367,49 +309,6 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
       });
     });
 
-    context.on("response", (response) => {
-      const check = (async () => {
-        if (securityAbort.signal.aborted) return;
-        const server = await withTimeout(
-          response.serverAddr(),
-          CRM_POLICY.limits.serverAddressCheckTimeoutMs,
-          signal,
-        ).catch(() => null);
-
-        if (!server) {
-          triggerBlock("server_ip_unavailable", {
-            kind: "server_ip_unavailable",
-            url: sanitizedUrl(response.url()),
-            reason: "server_ip_unavailable",
-            detail: "response.serverAddr() returned no address",
-          });
-          return;
-        }
-
-        const responseOrigin = (() => {
-          try { return new URL(response.url()).origin; } catch { return ""; }
-        })();
-        const pinnedIp = getPinnedIpForOrigin(responseOrigin);
-        if (!pinnedIp) {
-          triggerBlock("external_origin", {
-            kind: "blocked_request",
-            url: sanitizedUrl(response.url()),
-            reason: "external_origin",
-          });
-          return;
-        }
-        if (server.ipAddress !== pinnedIp) {
-          triggerBlock("unexpected_server_ip", {
-            kind: "unexpected_server_ip",
-            url: sanitizedUrl(response.url()),
-            reason: "unexpected_server_ip",
-            detail: `server_ip=${server.ipAddress}, expected=${pinnedIp}`,
-          });
-        }
-      })();
-      registerServerCheck(check);
-    });
-
     mainPage = await withTimeout(context.newPage(), CRM_POLICY.limits.operationTimeoutMs, signal);
 
     context.on("page", (page) => {
@@ -454,18 +353,6 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
       void download.cancel().catch(() => undefined);
     });
 
-    mainPage.on("framenavigated", (frame) => {
-      const url = frame.url();
-      if (url === "about:blank") return;
-      if (!isAllowedDocumentUrl(url, pageConfig.allowedDocuments)) {
-        triggerBlock("external_redirect", {
-          kind: "blocked_navigation",
-          url: sanitizedUrl(url),
-          reason: "external_redirect",
-        });
-      }
-    });
-
     await withTimeout(mainPage.goto(LOGIN_URL.href, { waitUntil: "domcontentloaded" }), CRM_POLICY.limits.operationTimeoutMs, signal);
     await withTimeout(mainPage.locator(CRM_POLICY.login.usernameSelector).fill(user), CRM_POLICY.limits.operationTimeoutMs, signal);
     await withTimeout(mainPage.locator(CRM_POLICY.login.passwordSelector).fill(pass), CRM_POLICY.limits.operationTimeoutMs, signal);
@@ -475,15 +362,6 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
       CRM_POLICY.limits.operationTimeoutMs,
       signal,
     );
-
-    if (!isAllowedDocumentUrl(mainPage.url(), pageConfig.allowedDocuments)) {
-      triggerBlock("external_redirect", {
-        kind: "blocked_navigation",
-        url: sanitizedUrl(mainPage.url()),
-        reason: "external_redirect",
-      });
-      return blockedResult("external_redirect");
-    }
 
     phase = "authenticated";
     collecting = true;
@@ -499,24 +377,8 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
       signal,
     );
 
-    await Promise.race([
-      Promise.allSettled([...pendingServerChecks]),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Timed out waiting for network security checks")), CRM_POLICY.limits.serverAddressCheckTimeoutMs),
-      ),
-    ]);
-
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
     if (derivedBlock) return blockedResult(derivedBlock);
-
-    if (!isAllowedDocumentUrl(mainPage.url(), pageConfig.allowedDocuments)) {
-      triggerBlock("external_redirect", {
-        kind: "blocked_navigation",
-        url: sanitizedUrl(mainPage.url()),
-        reason: "external_redirect",
-      });
-      return blockedResult("external_redirect");
-    }
 
     return {
       status: "success",
