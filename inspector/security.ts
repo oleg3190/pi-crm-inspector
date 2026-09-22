@@ -12,6 +12,23 @@ export type RequestDecision =
   | { allowed: true }
   | { allowed: false; reason: BlockReason };
 
+function trustedOriginConfig(origin: string) {
+  try {
+    const normalized = normalizedOrigin(origin);
+    return CRM_POLICY.trustedOrigins.find((item) => normalizedOrigin(item.origin) === normalized);
+  } catch {
+    return undefined;
+  }
+}
+
+export function isTrustedOrigin(origin: string): boolean {
+  return trustedOriginConfig(origin) !== undefined;
+}
+
+export function getPinnedIpForOrigin(origin: string): string | undefined {
+  return trustedOriginConfig(origin)?.pinnedIp;
+}
+
 const FORBIDDEN_GENERIC_WILDCARDS = new Set(["/*", "/**"]);
 
 export function normalizedOrigin(value: string): string {
@@ -143,7 +160,7 @@ export function isAllowedRequest(
 
   if (u.protocol !== "https:") return { allowed: false, reason: "non_https_scheme" };
   if (u.username || u.password) return { allowed: false, reason: "url_credentials_not_allowed" };
-  if (!sameOrigin(u.href, CRM_POLICY.origin)) return { allowed: false, reason: "external_origin" };
+  if (!isTrustedOrigin(u.origin)) return { allowed: false, reason: "external_origin" };
   if (!isAllowedPath(u.pathname, pageConfig.allowedRequestPaths)) {
     return { allowed: false, reason: "request_path_not_allowlisted" };
   }
@@ -179,11 +196,16 @@ export function validatePinnedIp(ip: string): void {
 
 export function validatePageConfig(pageConfig: PageConfig): void {
   if (!pageConfig.url.startsWith("https://")) throw new Error(`Page URL must use HTTPS: ${pageConfig.url}`);
+  const pageUrl = new URL(pageConfig.url);
+  if (pageUrl.username || pageUrl.password) throw new Error(`Page URL cannot contain credentials: ${pageConfig.url}`);
+  if (!isTrustedOrigin(pageUrl.origin)) throw new Error(`Page URL origin is not trusted: ${pageUrl.origin}`);
+
   for (const document of pageConfig.allowedDocuments) {
     const parsed = new URL(document);
     if (parsed.protocol !== "https:") throw new Error(`Document allowlist must use HTTPS: ${document}`);
     if (parsed.username || parsed.password) throw new Error(`Document allowlist cannot contain credentials: ${document}`);
     if (parsed.search.includes("*")) throw new Error(`Document query wildcards are forbidden: ${document}`);
+    if (!isTrustedOrigin(parsed.origin)) throw new Error(`Document origin is not trusted: ${parsed.origin}`);
   }
   for (const rule of pageConfig.allowedRequestPaths) validatePathRule(rule);
   validateQueryPolicy(pageConfig.query);
