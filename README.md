@@ -22,10 +22,8 @@ MAIN PI
           |     +-- explicit child model
           |
           +-- inspect_crm_page
-                +-- exact origin/document/path allowlist
-                +-- exact query-key allowlist
-                +-- GET/HEAD only; exact login POST during login phase
-                +-- DNS pinning + fail-closed server IP verification
+                +-- unrestricted web destinations
+                +-- GET/HEAD only; login-phase POST allowed
                 +-- no proxy / QUIC disabled
                 +-- Service Worker / WebSocket / download / popup blocking
                 +-- bounded/scrubbed output
@@ -71,34 +69,17 @@ export PI_CRM_CHILD_ENV_ALLOWLIST='EXTRA_NON_RUNTIME_ENV_NAME'
 
 Unsafe runtime variables such as `NODE_OPTIONS`, `NODE_PATH`, `LD_PRELOAD`, `DYLD_*`, `BASH_ENV`, and `ENV` are rejected from the extra child-environment allowlist.
 
-## CRM policy
+## Web destinations
 
-Edit `inspector/policy.ts` before deployment:
+URL/origin/path/query allowlists are disabled. The inspector may reach arbitrary web destinations from pages loaded during inspection.
 
-- `trustedOrigins` — one entry per allowed HTTPS origin, each with its own `pinnedIp`
-- login URL/selectors
-- page URLs
-- allowed document URLs
-- exact request paths
-- allowed query parameter names
+The browser still enforces:
+- GET/HEAD for authenticated browsing.
+- POST is allowed only during the login phase.
+- WebSockets, downloads, popups and Service Workers remain blocked.
+- Output remains bounded and secrets are scrubbed.
 
-A login host may be different from the CRM host. Add both origins to `trustedOrigins`, for example:
-
-```ts
-trustedOrigins: Object.freeze([
-  Object.freeze({ origin: "https://crm.example.internal", pinnedIp: "10.20.30.40" }),
-  Object.freeze({ origin: "https://auth.example.internal", pinnedIp: "10.20.30.41" }),
-]),
-
-login: Object.freeze({
-  url: "https://auth.example.internal/login",
-  // ...
-}),
-```
-
-Every trusted origin is pinned independently in Chromium's resolver, and every response is checked against the IP pinned for that response origin. All login and target documents must also be explicitly listed in each page's `allowedDocuments`.
-
-The default policy is intentionally narrow and contains example API paths. Replace them with the real read-only endpoints before deployment. Do not use `/**` or `/*`; the validator rejects those root-level rules.
+`inspector/policy.ts` still contains fixed login/page targets selected by `page_id`; those targets choose where an inspection starts, but they no longer restrict subsequent request destinations.
 
 ## Security boundary
 
@@ -111,8 +92,6 @@ The parent never trusts child final prose. It parses pi JSON events and extracts
 ## Hardening details
 
 - Login console/pageerror/requestfailure collection starts only after successful authentication.
-- Missing `response.serverAddr()` is a block, not an allow.
-- All pending server-address checks are awaited before success.
 - Browser/context launch races have late cleanup handlers to prevent orphan resources.
 - The child tool returns `terminate: true` so the child does not take another LLM turn after inspection.
 - The child environment is explicitly allowlisted instead of inheriting arbitrary process variables.
