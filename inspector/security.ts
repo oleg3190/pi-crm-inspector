@@ -12,23 +12,6 @@ export type RequestDecision =
   | { allowed: true }
   | { allowed: false; reason: BlockReason };
 
-function trustedOriginConfig(origin: string, trustedOrigins = CRM_POLICY.trustedOrigins) {
-  try {
-    const normalized = normalizedOrigin(origin);
-    return trustedOrigins.find((item) => normalizedOrigin(item.origin) === normalized);
-  } catch {
-    return undefined;
-  }
-}
-
-export function isTrustedOrigin(origin: string, trustedOrigins = CRM_POLICY.trustedOrigins): boolean {
-  return trustedOriginConfig(origin, trustedOrigins) !== undefined;
-}
-
-export function getPinnedIpForOrigin(origin: string, trustedOrigins = CRM_POLICY.trustedOrigins): string | undefined {
-  return trustedOriginConfig(origin, trustedOrigins)?.pinnedIp;
-}
-
 const FORBIDDEN_GENERIC_WILDCARDS = new Set(["/*", "/**"]);
 
 export function normalizedOrigin(value: string): string {
@@ -171,22 +154,9 @@ export function validatePinnedIp(ip: string): void {
 }
 
 export function validatePageConfig(pageConfig: PageConfig): void {
-  if (!pageConfig.url.startsWith("https://")) throw new Error(`Page URL must use HTTPS: ${pageConfig.url}`);
-  const pageUrl = new URL(pageConfig.url);
-  if (pageUrl.username || pageUrl.password) throw new Error(`Page URL cannot contain credentials: ${pageConfig.url}`);
-  if (!isTrustedOrigin(pageUrl.origin)) throw new Error(`Page URL origin is not trusted: ${pageUrl.origin}`);
-
-  for (const document of pageConfig.allowedDocuments) {
-    const parsed = new URL(document);
-    if (parsed.protocol !== "https:") throw new Error(`Document allowlist must use HTTPS: ${document}`);
-    if (parsed.username || parsed.password) throw new Error(`Document allowlist cannot contain credentials: ${document}`);
-    if (parsed.search.includes("*")) throw new Error(`Document query wildcards are forbidden: ${document}`);
-    if (!isTrustedOrigin(parsed.origin)) throw new Error(`Document origin is not trusted: ${parsed.origin}`);
-  }
   for (const rule of pageConfig.allowedRequestPaths) validatePathRule(rule);
   validateQueryPolicy(pageConfig.query);
 }
-
 export function scrubSecrets(text: string, secrets: readonly string[]): string {
   let value = text;
 
