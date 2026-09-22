@@ -36,7 +36,7 @@ MAIN PI
 
 - Node.js `>=22.19.0`.
 - pi `0.85.1` compatible runtime.
-- Playwright `1.63.0`.
+- Playwright `1.62.1`.
 - Chromium installed for Playwright.
 
 ## Install
@@ -75,13 +75,28 @@ Unsafe runtime variables such as `NODE_OPTIONS`, `NODE_PATH`, `LD_PRELOAD`, `DYL
 
 Edit `inspector/policy.ts` before deployment:
 
-- `origin`
-- `pinnedIp`
+- `trustedOrigins` — one entry per allowed HTTPS origin, each with its own `pinnedIp`
 - login URL/selectors
 - page URLs
 - allowed document URLs
 - exact request paths
 - allowed query parameter names
+
+A login host may be different from the CRM host. Add both origins to `trustedOrigins`, for example:
+
+```ts
+trustedOrigins: Object.freeze([
+  Object.freeze({ origin: "https://crm.example.internal", pinnedIp: "10.20.30.40" }),
+  Object.freeze({ origin: "https://auth.example.internal", pinnedIp: "10.20.30.41" }),
+]),
+
+login: Object.freeze({
+  url: "https://auth.example.internal/login",
+  // ...
+}),
+```
+
+Every trusted origin is pinned independently in Chromium's resolver, and every response is checked against the IP pinned for that response origin. All login and target documents must also be explicitly listed in each page's `allowedDocuments`.
 
 The default policy is intentionally narrow and contains example API paths. Replace them with the real read-only endpoints before deployment. Do not use `/**` or `/*`; the validator rejects those root-level rules.
 
