@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.ts";
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
-import { buildHostResolverRules } from "../inspector/index.ts";
-import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedDocumentUrl, isTrustedOrigin, getPinnedIpForOrigin } from "../inspector/security.ts";
+import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest } from "../inspector/security.ts";
 import { buildChildEnv, extractChildToolResult } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
@@ -154,35 +153,52 @@ test("non-https — normalizedOrigin throws for http", () => {
 });
 
 
-test("multiple trusted origins — auth subdomain is supported", () => {
-  const origins = [
-    { origin: "https://crm.example.internal", pinnedIp: "10.20.30.40" },
-    { origin: "https://auth.example.internal", pinnedIp: "10.20.30.41" },
-  ];
+test("URL allowlist is disabled — arbitrary destinations are allowed", () => {
+  const pageConfig = getPageConfig("dashboard");
+  const makeRequest = (url, method = "GET") => ({
+    url: () => url,
+    method: () => method,
+    resourceType: () => "document",
+  });
 
-  assert.equal(isTrustedOrigin("https://crm.example.internal", origins), true);
-  assert.equal(isTrustedOrigin("https://auth.example.internal", origins), true);
-  assert.equal(isTrustedOrigin("https://outside.example.internal", origins), false);
-  assert.equal(getPinnedIpForOrigin("https://auth.example.internal", origins), "10.20.30.41");
-  assert.equal(getPinnedIpForOrigin("https://outside.example.internal", origins), undefined);
-
-  assert.equal(
-    buildHostResolverRules(origins),
-    "MAP crm.example.internal 10.20.30.40, MAP auth.example.internal 10.20.30.41, MAP * ~NOTFOUND",
+  assert.deepEqual(
+    isAllowedRequest(makeRequest("https://auth.example.internal/login"), pageConfig, "login"),
+    { allowed: true },
+  );
+  assert.deepEqual(
+    isAllowedRequest(makeRequest("https://another.example.com/any/path?foo=bar"), pageConfig, "authenticated"),
+    { allowed: true },
+  );
+  assert.deepEqual(
+    isAllowedRequest(makeRequest("http://10.0.0.5:8080/unlisted", "GET"), pageConfig, "authenticated"),
+    { allowed: true },
   );
 });
 
-test("document allowlist accepts a trusted auth origin", () => {
-  const allowedDocuments = [
-    "https://auth.example.internal/login",
-    "https://crm.example.internal/dashboard",
-  ];
-  assert.equal(
-    isAllowedDocumentUrl("https://auth.example.internal/login", allowedDocuments),
-    true,
+test("URL allowlist disabled — login POST is allowed regardless of destination", () => {
+  const pageConfig = getPageConfig("dashboard");
+  const request = {
+    url: () => "https://auth.example.internal/login",
+    method: () => "POST",
+    resourceType: () => "document",
+  };
+
+  assert.deepEqual(
+    isAllowedRequest(request, pageConfig, "login"),
+    { allowed: true },
   );
-  assert.equal(
-    isAllowedDocumentUrl("https://evil.example.internal/login", allowedDocuments),
-    false,
+});
+
+test("method policy remains enforced", () => {
+  const pageConfig = getPageConfig("dashboard");
+  const request = {
+    url: () => "https://any.example.com/path",
+    method: () => "DELETE",
+    resourceType: () => "document",
+  };
+
+  assert.deepEqual(
+    isAllowedRequest(request, pageConfig, "authenticated"),
+    { allowed: false, reason: "blocked_method" },
   );
 });
