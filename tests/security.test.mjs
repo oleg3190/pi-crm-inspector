@@ -7,7 +7,7 @@ import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validate
 import { buildChildEnv, extractChildToolResult } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
-  assert.equal(normalizedOrigin(CRM_POLICY.origin), CRM_POLICY.origin);
+  assert.equal(normalizedOrigin(CRM_POLICY.trustedOrigins[0].origin), CRM_POLICY.trustedOrigins[0].origin);
   assert.throws(() => normalizedOrigin("http://crm.example.internal"));
   assert.throws(() => normalizedOrigin("https://crm.example.internal/path"));
 });
