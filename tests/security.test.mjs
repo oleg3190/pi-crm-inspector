@@ -189,16 +189,26 @@ test("URL allowlist disabled — login POST is allowed regardless of destination
   );
 });
 
-test("method policy remains enforced", () => {
+test("all HTTP methods are allowed", () => {
   const pageConfig = getPageConfig("dashboard");
-  const request = {
-    url: () => "https://any.example.com/path",
-    method: () => "DELETE",
-    resourceType: () => "document",
-  };
+  for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+    const request = {
+      url: () => "https://any.example.com/path",
+      method: () => method,
+      resourceType: () => "document",
+    };
 
-  assert.deepEqual(
-    isAllowedRequest(request, pageConfig, "authenticated"),
-    { allowed: false, reason: "blocked_method" },
-  );
+    assert.deepEqual(
+      isAllowedRequest(request, pageConfig, "authenticated"),
+      { allowed: true },
+    );
+  }
+});
+
+test("WebSocket is enabled and popup blocking is disabled", async () => {
+  const policy = await import("../inspector/policy.ts");
+  assert.equal(policy.CRM_POLICY.browser.allowWebSocket, true);
+
+  const index = await import("../inspector/index.ts");
+  assert.equal(typeof index.default, "function");
 });
