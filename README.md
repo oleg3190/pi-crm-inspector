@@ -23,9 +23,10 @@ MAIN PI
           |
           +-- inspect_crm_page
                 +-- unrestricted web destinations
-                +-- GET/HEAD only; login-phase POST allowed
+                +-- all HTTP methods allowed
+                +-- WebSocket and popup pages allowed
                 +-- no proxy / QUIC disabled
-                +-- Service Worker / WebSocket / download / popup blocking
+                +-- Service Worker / download blocking
                 +-- bounded/scrubbed output
                 +-- no login telemetry collection
 ```
@@ -74,9 +75,10 @@ Unsafe runtime variables such as `NODE_OPTIONS`, `NODE_PATH`, `LD_PRELOAD`, `DYL
 URL/origin/path/query allowlists are disabled. The inspector may reach arbitrary web destinations from pages loaded during inspection.
 
 The browser still enforces:
-- GET/HEAD for authenticated browsing.
-- POST is allowed only during the login phase.
-- WebSockets, downloads, popups and Service Workers remain blocked.
+- WebSockets are enabled.
+- Popup/new-page creation is allowed.
+- All HTTP methods are allowed.
+- Downloads and Service Workers remain blocked.
 - Output remains bounded and secrets are scrubbed.
 
 `inspector/policy.ts` still contains fixed login/page targets selected by `page_id`; those targets choose where an inspection starts, but they no longer restrict subsequent request destinations.
