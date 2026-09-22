@@ -47,8 +47,8 @@ type InspectorPhase = "login" | "authenticated";
 const username = () => process.env.PI_CRM_USERNAME ?? "";
 const password = () => process.env.PI_CRM_PASSWORD ?? "";
 
-export function buildHostResolverRules(): string {
-  const mappings = CRM_POLICY.trustedOrigins.map(({ origin, pinnedIp }) => {
+export function buildHostResolverRules(trustedOrigins = CRM_POLICY.trustedOrigins): string {
+  const mappings = trustedOrigins.map(({ origin, pinnedIp }) => {
     const hostname = new URL(origin).hostname;
     const target = pinnedIp.includes(":") ? `[${pinnedIp}]` : pinnedIp;
     return `MAP ${hostname} ${target}`;
