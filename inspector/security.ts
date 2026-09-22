@@ -1,4 +1,3 @@
-import { isIP } from "node:net";
 import type { Request } from "playwright";
 import { CRM_POLICY, type BlockReason } from "./policy.ts";
 import type { QueryPolicy, PageConfig } from "./policy.ts";
@@ -130,28 +129,14 @@ export function isAllowedDocumentUrl(url: string, allowedDocuments: readonly str
 }
 
 export function isAllowedRequest(
-  request: Request,
+  _request: Request,
   _pageConfig: PageConfig,
-  phase: RequestPhase,
+  _phase: RequestPhase,
 ): RequestDecision {
-  const method = request.method().toUpperCase();
-
-  // URL/origin/path/query/document allowlists are intentionally disabled.
-  // Any web destination can be requested; only HTTP method policy remains.
-  if (CRM_POLICY.allowLoginPost && phase === "login" && method === "POST") {
-    return { allowed: true };
-  }
-
-  if (CRM_POLICY.allowOnlyReadMethods.includes(method)) {
-    return { allowed: true };
-  }
-
-  return { allowed: false, reason: "blocked_method" };
+  // URL, origin, path, query and HTTP method restrictions are intentionally disabled.
+  return { allowed: true };
 }
 
-export function validatePinnedIp(ip: string): void {
-  if (isIP(ip) === 0) throw new Error(`CRM_POLICY.pinnedIp is not a valid IP address: ${ip}`);
-}
 
 export function validatePageConfig(pageConfig: PageConfig): void {
   for (const rule of pageConfig.allowedRequestPaths) validatePathRule(rule);
