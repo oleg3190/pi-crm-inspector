@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.ts";
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
-import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedDocumentUrl } from "../inspector/security.ts";
+import { buildHostResolverRules } from "../inspector/index.ts";
+import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedDocumentUrl, isTrustedOrigin, getPinnedIpForOrigin } from "../inspector/security.ts";
 import { buildChildEnv, extractChildToolResult } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
@@ -150,4 +151,38 @@ test("non-https — normalizedOrigin throws for http", () => {
   assert.throws(() => normalizedOrigin("http://crm.example.internal"));
   assert.throws(() => normalizedOrigin("http://crm.example.internal/"));
   assert.doesNotThrow(() => normalizedOrigin("https://crm.example.internal"));
+});
+
+
+test("multiple trusted origins — auth subdomain is supported", () => {
+  const origins = [
+    { origin: "https://crm.example.internal", pinnedIp: "10.20.30.40" },
+    { origin: "https://auth.example.internal", pinnedIp: "10.20.30.41" },
+  ];
+
+  assert.equal(isTrustedOrigin("https://crm.example.internal", origins), true);
+  assert.equal(isTrustedOrigin("https://auth.example.internal", origins), true);
+  assert.equal(isTrustedOrigin("https://outside.example.internal", origins), false);
+  assert.equal(getPinnedIpForOrigin("https://auth.example.internal", origins), "10.20.30.41");
+  assert.equal(getPinnedIpForOrigin("https://outside.example.internal", origins), undefined);
+
+  assert.equal(
+    buildHostResolverRules(origins),
+    "MAP crm.example.internal 10.20.30.40, MAP auth.example.internal 10.20.30.41, MAP * ~NOTFOUND",
+  );
+});
+
+test("document allowlist accepts a trusted auth origin", () => {
+  const allowedDocuments = [
+    "https://auth.example.internal/login",
+    "https://crm.example.internal/dashboard",
+  ];
+  assert.equal(
+    isAllowedDocumentUrl("https://auth.example.internal/login", allowedDocuments),
+    true,
+  );
+  assert.equal(
+    isAllowedDocumentUrl("https://evil.example.internal/login", allowedDocuments),
+    false,
+  );
 });
