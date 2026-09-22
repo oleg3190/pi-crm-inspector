@@ -81,7 +81,7 @@ export const CRM_POLICY = Object.freeze({
 
   browser: Object.freeze({
     disableProxy: true,
-    allowWebSocket: false,
+    allowWebSocket: true,
     allowDownloads: false,
     serviceWorkers: "block" as const,
   }),
@@ -98,8 +98,7 @@ export const CRM_POLICY = Object.freeze({
     maxUrlQueryChars: 2_048,
   }),
 
-  allowLoginPost: true,
-  allowOnlyReadMethods: ["GET", "HEAD"] as readonly string[],
+
 } as const);
 
 export const PAGE_IDS = ["dashboard", "billing_logs", "auth_logs"] as const;
