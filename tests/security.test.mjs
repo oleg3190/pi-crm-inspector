@@ -95,6 +95,7 @@ test("protocol guard accepts only valid results", () => {
     pageText: "ipsum Dashboard",
     domSnapshot: "<body><main>ipsum Dashboard</main></body>",
     interactions: [],
+    elements: [],
     console: [],
     pageErrors: [],
     requestFailures: [],
@@ -108,10 +109,29 @@ test("protocol guard accepts only valid results", () => {
     isInspectResult({ status: "success", ...base, interactions: Array.from({ length: 9 }, (_, index) => ({ type: "click", selector: String(index), ok: true, matched: 1 })) }),
     false,
   );
+  assert.equal(
+    isInspectResult({
+      status: "success",
+      ...base,
+      interactions: [{ type: "click", selector: "#go", ok: true, matched: 1, waitFor: { selector: "#ready", state: "visible", timeoutMs: 1000 } }],
+      elements: [{ kind: "button", selector: "body:nth-of-type(1) > button:nth-of-type(1)", visible: true, enabled: true }],
+      screenshot: { mimeType: "image/png", width: 800, height: 600 },
+    }),
+    true,
+  );
   assert.throws(() => asInspectResult({ status: "success" }));
 });
 
 // ===== Adversarial / Regression Tests =====
+
+test("child screenshot content is extracted separately from result details", () => {
+  const fakeStdout = `
+{"type":"tool_execution_end","toolName":"inspect_crm_page","result":{"details":{"status":"success","traceId":"t1","pageId":"dashboard","durationMs":1,"pageText":"ipsum","domSnapshot":"<body></body>","interactions":[],"elements":[],"console":[],"pageErrors":[],"requestFailures":[],"securityEvents":[],"droppedEvents":0},"content":[{"type":"text","text":"{}"},{"type":"image","data":"abc","mimeType":"image/png"}]}}
+`;
+  const images = require("../dispatcher/index.ts");
+  assert.deepEqual(images.extractChildToolImages(fakeStdout, false), [{ type: "image", data: "abc", mimeType: "image/png" }]);
+});
+
 
 test("protocol — two tool_execution_end events → extractChildToolResult throws", () => {
   const fakeStdout = `
