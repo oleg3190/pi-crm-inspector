@@ -51,7 +51,7 @@ export const CRM_POLICY = Object.freeze({
     dashboard: Object.freeze({
       url: REPORT_URL,
       allowedDocuments: Object.freeze([`${AUTH_ORIGIN}/`, REPORT_URL]),
-      allowedRequestPaths: Object.freeze(["/v7/**", ...BASE_PATHS]),
+      allowedRequestPaths: Object.freeze(["/api/dashboard/summary", "/v7/**", ...BASE_PATHS]),
       query: Object.freeze({ allowedKeys: [] as string[], anyKeys: true }),
     }),
     billing_logs: Object.freeze({
