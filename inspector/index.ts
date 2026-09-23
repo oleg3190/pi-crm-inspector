@@ -638,6 +638,13 @@ export function hasSensitiveInspectAction(actions: readonly InspectAction[]): bo
   return actions.some((action) => action.type === "fill" && action.sensitive === true);
 }
 
+export function shouldCaptureInspectScreenshot(
+  actions: readonly InspectAction[],
+  screenshotRequested: boolean,
+): boolean {
+  return screenshotRequested && !hasSensitiveInspectAction(actions);
+}
+
 export async function runInspectActions(
   page: Page,
   actions: readonly InspectAction[],
@@ -1089,7 +1096,7 @@ async function inspectPage(
       : `${scrubbedPageText.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
     const domSnapshot = await captureDomSnapshot(mainPage);
     const screenshotSuppressed = screenshotRequested && hasSensitiveInspectAction(actions);
-    const screenshotCapture = screenshotRequested && !screenshotSuppressed
+    const screenshotCapture = shouldCaptureInspectScreenshot(actions, screenshotRequested)
       ? await captureViewportScreenshot(mainPage)
       : undefined;
 
