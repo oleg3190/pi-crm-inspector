@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.ts";
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
+import { anonymizeTextContent } from "../inspector/index.ts";
 import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest } from "../inspector/security.ts";
 import { buildChildEnv, extractChildToolResult } from "../dispatcher/index.ts";
 
@@ -23,6 +24,16 @@ test("query allowlist is deny-by-default", () => {
   assert.equal(isAllowedQuery("", { allowedKeys: [] }), true);
   assert.equal(isAllowedQuery("?page=1", { allowedKeys: [] }), false);
   assert.equal(isAllowedQuery("?page=1", { allowedKeys: ["page"] }), true);
+});
+
+test("text anonymization preserves digit count and number-like formatting", () => {
+  const input = "Иван Иванов: заказ №12345, сумма 1 234,56 руб. Телефон +372 555-1234";
+  const output = anonymizeTextContent(input);
+
+  assert.equal(output, "ipsum ipsum: ipsum №77777, ipsum 7 777,77 ipsum. ipsum +777 777-7777");
+  assert.equal((output.match(/\\d/g) ?? []).length, (input.match(/\\d/g) ?? []).length);
+  assert.equal((output.match(/77777/g) ?? []).length, 1);
+  assert.equal(anonymizeTextContent(output), output);
 });
 
 test("secrets are redacted", () => {
