@@ -385,10 +385,22 @@ export default function (pi: ExtensionAPI) {
           Type.Object({
             type: Type.Literal("click"),
             selector: Type.String({ minLength: 1, maxLength: 512 }),
+            waitFor: Type.Optional(
+              Type.Object({
+                selector: Type.String({ minLength: 1, maxLength: 512 }),
+                state: Type.Union([
+                  Type.Literal("visible"),
+                  Type.Literal("hidden"),
+                  Type.Literal("attached"),
+                  Type.Literal("detached"),
+                ]),
+                timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+              }),
+            ),
           }),
           {
             maxItems: MAX_INSPECT_ACTIONS,
-            description: "Optional UI checks. Supports CSS/Playwright selector clicks after the page has stabilized.",
+            description: "Optional UI checks. Clicks can wait for a concrete DOM state.",
           },
         ),
       ),
