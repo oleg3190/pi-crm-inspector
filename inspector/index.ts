@@ -663,7 +663,8 @@ async function inspectPage(
   externalSignal?: AbortSignal,
   customPath?: string,
   actions: readonly InspectAction[] = [],
-): Promise<InspectResult> {
+  screenshotRequested = false,
+): Promise<InspectExecution> {
   const traceId = randomUUID();
   const startedAt = Date.now();
   const consoleEvents: ConsoleLog[] = [];
@@ -947,11 +948,11 @@ async function inspectPage(
     return { result, screenshotData: screenshotCapture?.data };
   } catch (error) {
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
-    if (derivedBlock) return blockedResult(derivedBlock);
+    if (derivedBlock) return { result: blockedResult(derivedBlock) };
 
     return {
       result: {
-      status: "error",
+        status: "error",
       traceId,
       pageId,
       durationMs: Date.now() - startedAt,
@@ -973,11 +974,6 @@ export default function (pi: ExtensionAPI) {
   }
 
   let invocationUsed = false;
-
-  const InspectActionSchema = Type.Object({
-    type: Type.Literal("click"),
-    selector: Type.String({ minLength: 1, maxLength: 512 }),
-  });
 
   pi.registerTool({
     name: TOOL_NAME,
@@ -1005,12 +1001,12 @@ export default function (pi: ExtensionAPI) {
             waitFor: Type.Optional(
               Type.Object({
                 selector: Type.String({ minLength: 1, maxLength: 512 }),
-                state: Type.Optional(Type.Union([
+                state: Type.Union([
                   Type.Literal("visible"),
                   Type.Literal("hidden"),
                   Type.Literal("attached"),
                   Type.Literal("detached"),
-                ])),
+                ]),
                 timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
               }),
             ),
