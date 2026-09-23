@@ -101,5 +101,9 @@ export function customPageConfig(path: string): PageConfig {
 export const PAGE_IDS = ["dashboard", "billing_logs", "auth_logs", "custom"] as const;
 
 export function getPageConfig(pageId: PageId): PageConfig {
+  if (pageId === "custom") {
+    throw new Error("Custom page requires a path; use customPageConfig(path).");
+  }
+
   return CRM_POLICY.pages[pageId];
 }
