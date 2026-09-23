@@ -7,6 +7,7 @@ import {
   captureViewportScreenshot,
   hasSensitiveInspectAction,
   runInspectActions,
+  runInspectAssertions,
   shouldCaptureInspectScreenshot,
   waitForDomStability,
 } from "../inspector/index.ts";
@@ -199,4 +200,112 @@ test("browser inspection supports deterministic form actions", async (t) => {
   assert.equal(hasSensitiveInspectAction(actions), true);
   assert.equal(shouldCaptureInspectScreenshot(actions, true), false);
   assert.equal(shouldCaptureInspectScreenshot(actions.slice(0, 4), true), true);
+});
+
+
+test("browser inspection can verify pagination state after moving to the next page", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+  });
+
+  const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+  await page.setContent(`
+    <!doctype html>
+    <html>
+      <body>
+        <main>
+          <div id="page" data-page="1">Page 1</div>
+          <table>
+            <tbody id="rows">
+              <tr><td>Client 1</td></tr>
+              <tr><td>Client 2</td></tr>
+              <tr><td>Client 3</td></tr>
+            </tbody>
+          </table>
+          <button id="previous" disabled aria-label="Previous">Previous</button>
+          <button id="next" aria-label="Next">Next</button>
+        </main>
+        <script>
+          const pageLabel = document.querySelector("#page");
+          const rows = document.querySelector("#rows");
+          const previous = document.querySelector("#previous");
+          const next = document.querySelector("#next");
+
+          next.addEventListener("click", () => {
+            setTimeout(() => {
+              pageLabel.dataset.page = "2";
+              pageLabel.textContent = "Page 2";
+              rows.innerHTML = "<tr><td>Client 4</td></tr><tr><td>Client 5</td></tr>";
+              previous.disabled = false;
+              next.disabled = true;
+              next.setAttribute("aria-disabled", "true");
+              window.location.hash = "page=2";
+            }, 120);
+          });
+        </script>
+      </body>
+    </html>
+  `);
+
+  const signal = new AbortController().signal;
+  await waitForDomStability(page, signal);
+
+  const interactions = await runInspectActions(page, [
+    {
+      type: "click",
+      target: { by: "role", role: "button", name: "Next" },
+      waitFor: { selector: '[data-page="2"]', state: "visible", timeoutMs: 2_000 },
+    },
+  ], signal);
+
+  assert.equal(interactions.length, 1);
+  assert.equal(interactions[0].ok, true);
+
+  const assertions = await runInspectAssertions(page, [
+    {
+      type: "expectText",
+      target: { by: "id", value: "page" },
+      text: "Page 2",
+    },
+    {
+      type: "expectVisible",
+      target: { by: "role", role: "button", name: "Previous" },
+    },
+    {
+      type: "expectCount",
+      target: { by: "css", value: "#rows tr" },
+      count: 2,
+    },
+    {
+      type: "expectAttribute",
+      target: { by: "role", role: "button", name: "Next" },
+      name: "aria-disabled",
+      value: "true",
+    },
+    {
+      type: "expectUrl",
+      value: "#page=2",
+      mode: "contains",
+    },
+    {
+      type: "expectElementState",
+      target: { by: "role", role: "button", name: "Next" },
+      state: "disabled",
+    },
+  ], signal);
+
+  assert.equal(assertions.length, 6);
+  assert(assertions.every((assertion) => assertion.ok), JSON.stringify(assertions));
+  assert.equal(assertions[2].actualCount, 2);
+  assert.equal(assertions[3].attributePresent, true);
+  assert.equal(assertions[5].state, "disabled");
+
+  const failed = await runInspectAssertions(page, [{
+    type: "expectText",
+    target: { by: "id", value: "page" },
+    text: "Page 99",
+  }], signal);
+  assert.equal(failed[0].ok, false);
+  assert.equal(failed[0].error, "Text assertion failed");
 });
