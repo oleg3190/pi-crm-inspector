@@ -4,7 +4,7 @@ import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.t
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
 import { anonymizeTextContent, anonymizeTextSegments } from "../inspector/index.ts";
 import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest, isAllowedDocumentUrl } from "../inspector/security.ts";
-import { buildChildEnv, extractChildToolResult } from "../dispatcher/index.ts";
+import { buildChildEnv, extractChildToolResult, extractChildToolImages } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
   assert.equal(normalizedOrigin("https://crm.example.internal"), "https://crm.example.internal");
@@ -128,8 +128,7 @@ test("child screenshot content is extracted separately from result details", () 
   const fakeStdout = `
 {"type":"tool_execution_end","toolName":"inspect_crm_page","result":{"details":{"status":"success","traceId":"t1","pageId":"dashboard","durationMs":1,"pageText":"ipsum","domSnapshot":"<body></body>","interactions":[],"elements":[],"console":[],"pageErrors":[],"requestFailures":[],"securityEvents":[],"droppedEvents":0},"content":[{"type":"text","text":"{}"},{"type":"image","data":"abc","mimeType":"image/png"}]}}
 `;
-  const images = require("../dispatcher/index.ts");
-  assert.deepEqual(images.extractChildToolImages(fakeStdout, false), [{ type: "image", data: "abc", mimeType: "image/png" }]);
+  assert.deepEqual(extractChildToolImages(fakeStdout, false), [{ type: "image", data: "abc", mimeType: "image/png" }]);
 });
 
 
