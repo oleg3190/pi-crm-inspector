@@ -85,6 +85,51 @@ The browser still enforces:
 
 `inspector/policy.ts` still contains fixed login/page targets selected by `page_id`; those targets choose where an inspection starts, but they no longer restrict subsequent request destinations.
 
+## Bounded UI actions and assertions
+
+The inspector supports up to 8 deterministic UI actions per inspection: `click`, `fill`, `select`, `check`, and allowlisted `press` keys. Actions can wait for a concrete DOM state and then wait for DOM stability.
+
+For pagination and other stateful flows, pass up to 8 post-action assertions. Supported assertions are:
+
+- `expectText`
+- `expectVisible`
+- `expectCount`
+- `expectAttribute`
+- `expectUrl`
+- `expectElementState` (`visible`, `hidden`, `enabled`, `disabled`, `checked`, `unchecked`, `expanded`, `collapsed`)
+
+Example:
+
+```json
+{
+  "actions": [
+    {
+      "type": "click",
+      "target": { "by": "role", "role": "button", "name": "Next" },
+      "waitFor": { "selector": "[data-page=\"2\"]", "state": "visible" }
+    }
+  ],
+  "assertions": [
+    {
+      "type": "expectText",
+      "target": { "by": "id", "value": "page" },
+      "text": "Page 2"
+    },
+    {
+      "type": "expectCount",
+      "target": { "by": "css", "value": "tbody tr" },
+      "count": 25
+    },
+    {
+      "type": "expectElementState",
+      "target": { "by": "role", "role": "button", "name": "Next" },
+      "state": "disabled"
+    }
+  ]
+}
+```
+
+Assertion failures are returned as structured `ok: false` entries and summarized by `assertionsPassed`; assertions never execute JavaScript, regexes, shell commands, or network requests.
 ## Security boundary
 
 This extension isolates the browser capability in a child pi process. It is not an OS/kernel sandbox for the main pi process. In ordinary pi mode, the main agent still has its normal tools. Use an OS/container egress policy if you need a hard guarantee that the main process cannot reach arbitrary networks.
