@@ -97,7 +97,7 @@ function findDateRanges(text: string): TextRange[] {
 function anonymizeNonDateText(text: string, replacement: string): string {
   return text
     .replace(/\d/gu, "7")
-    .replace(/[^\d\s\p{P}]+/gu, replacement);
+    .replace(/[\p{L}\p{M}]+/gu, replacement);
 }
 
 function anonymizeSegment(text: string, protectedRanges: TextRange[], offset: number, replacement: string): string {
@@ -154,7 +154,7 @@ function buildTextReplacementScript(replacement: string = DEFAULT_TEXT_REPLACEME
     "",
     "  const anonymizeNonDateText = (text) => text",
     '    .replace(/\\d/gu, "7")',
-    '    .replace(/[^\d\s\p{P}]+/gu, replacement);',
+    '    .replace(/[\p{L}\p{M}]+/gu, replacement);',
     "",
     "  const anonymizeSegment = (text, protectedRanges, offset) => {",
     '    let result = "";',
