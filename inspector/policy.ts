@@ -29,6 +29,7 @@ const LOGIN_URL = `${AUTH_ORIGIN}/`;
 
 const BASE_PATHS = [
   "/",
+  "/login",
   "/v4/**",
   "/assets/**",
   "/static/**",
