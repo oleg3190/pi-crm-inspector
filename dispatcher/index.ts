@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PAGE_IDS, CUSTOM_PAGE_ID, normalizeCustomPath, asInspectResult, type InspectResult, type PageId } from "../shared/protocol.ts";
+import { PAGE_IDS, CUSTOM_PAGE_ID, normalizeCustomPath, asInspectResult, type InspectAction, type InspectResult, type PageId } from "../shared/protocol.ts";
 
 const TOOL_NAME = "crm_inspector_subagent" as const;
 const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
@@ -17,6 +17,103 @@ const MAX_CHILD_STDOUT = 2 * 1024 * 1024;
 const MAX_CHILD_STDERR = 32 * 1024;
 const MAX_INSPECT_ACTIONS = 8;
 const PageIdSchema = StringEnum(PAGE_IDS, { description: "Fixed CRM page identifier." });
+
+const InspectTargetSchema = Type.Union([
+  Type.Object({ by: Type.Literal("css"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+  Type.Object({ by: Type.Literal("id"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+  Type.Object({
+    by: Type.Literal("role"),
+    role: Type.String({ minLength: 1, maxLength: 64 }),
+    name: Type.Optional(Type.String({ maxLength: 512 })),
+  }),
+  Type.Object({ by: Type.Literal("label"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+  Type.Object({ by: Type.Literal("placeholder"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+  Type.Object({ by: Type.Literal("text"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+  Type.Object({ by: Type.Literal("testId"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+]);
+
+const InspectWaitForSchema = Type.Object({
+  selector: Type.String({ minLength: 1, maxLength: 512 }),
+  state: Type.Union([
+    Type.Literal("visible"),
+    Type.Literal("hidden"),
+    Type.Literal("attached"),
+    Type.Literal("detached"),
+  ]),
+  timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+});
+
+const InspectClickSchema = Type.Union([
+  Type.Object({
+    type: Type.Literal("click"),
+    target: InspectTargetSchema,
+    waitFor: Type.Optional(InspectWaitForSchema),
+  }),
+  Type.Object({
+    type: Type.Literal("click"),
+    selector: Type.String({ minLength: 1, maxLength: 512 }),
+    waitFor: Type.Optional(InspectWaitForSchema),
+  }),
+]);
+
+const InspectFillSchema = Type.Object({
+  type: Type.Literal("fill"),
+  target: InspectTargetSchema,
+  value: Type.String({ maxLength: 4096 }),
+  sensitive: Type.Optional(Type.Boolean()),
+  waitFor: Type.Optional(InspectWaitForSchema),
+});
+
+const InspectSelectSchema = Type.Object({
+  type: Type.Literal("select"),
+  target: InspectTargetSchema,
+  option: Type.Union([
+    Type.Object({
+      value: Type.String({ minLength: 1, maxLength: 512 }),
+      label: Type.Optional(Type.String({ maxLength: 512 })),
+    }),
+    Type.Object({
+      label: Type.String({ minLength: 1, maxLength: 512 }),
+      value: Type.Optional(Type.String({ maxLength: 512 })),
+    }),
+  ]),
+  waitFor: Type.Optional(InspectWaitForSchema),
+});
+
+const InspectCheckSchema = Type.Object({
+  type: Type.Literal("check"),
+  target: InspectTargetSchema,
+  checked: Type.Boolean(),
+  waitFor: Type.Optional(InspectWaitForSchema),
+});
+
+const InspectPressSchema = Type.Object({
+  type: Type.Literal("press"),
+  target: InspectTargetSchema,
+  key: Type.Union([
+    Type.Literal("Enter"),
+    Type.Literal("Escape"),
+    Type.Literal("Tab"),
+    Type.Literal("ArrowDown"),
+    Type.Literal("ArrowUp"),
+    Type.Literal("ArrowLeft"),
+    Type.Literal("ArrowRight"),
+    Type.Literal("Home"),
+    Type.Literal("End"),
+    Type.Literal("Space"),
+    Type.Literal("Backspace"),
+    Type.Literal("Delete"),
+  ]),
+  waitFor: Type.Optional(InspectWaitForSchema),
+]);
+
+const InspectActionSchema = Type.Union([
+  InspectClickSchema,
+  InspectFillSchema,
+  InspectSelectSchema,
+  InspectCheckSchema,
+  InspectPressSchema,
+]);
 
 const CHILD_PROMPT = `You are the CRM Inspector child agent.
 
@@ -165,7 +262,7 @@ async function runChild(
   pageId: PageId,
   signal?: AbortSignal,
   customPath?: string,
-  actions: readonly { type: "click"; selector: string; waitFor?: unknown }[] = [],
+  actions: readonly InspectAction[] = [],
   screenshotRequested = false,
 ): Promise<ChildExecution> {
   const invocationTraceId = randomUUID();
@@ -381,28 +478,10 @@ export default function (pi: ExtensionAPI) {
         Type.Boolean({ description: "Capture a viewport screenshot after actions and DOM stabilization." }),
       ),
       actions: Type.Optional(
-        Type.Array(
-          Type.Object({
-            type: Type.Literal("click"),
-            selector: Type.String({ minLength: 1, maxLength: 512 }),
-            waitFor: Type.Optional(
-              Type.Object({
-                selector: Type.String({ minLength: 1, maxLength: 512 }),
-                state: Type.Union([
-                  Type.Literal("visible"),
-                  Type.Literal("hidden"),
-                  Type.Literal("attached"),
-                  Type.Literal("detached"),
-                ]),
-                timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
-              }),
-            ),
-          }),
-          {
-            maxItems: MAX_INSPECT_ACTIONS,
-            description: "Optional UI checks. Clicks can wait for a concrete DOM state.",
-          },
-        ),
+        Type.Array(InspectActionSchema, {
+          maxItems: MAX_INSPECT_ACTIONS,
+          description: "Optional deterministic UI actions. Prefer semantic targets (role/label/testId) over raw CSS.",
+        }),
       ),
     }),
     async execute(_toolCallId, params, signal) {
@@ -416,7 +495,7 @@ export default function (pi: ExtensionAPI) {
         params.page_id,
         signal,
         customPath,
-        (params.actions as Array<{ type: "click"; selector: string; waitFor?: unknown }> | undefined) ?? [],
+        (params.actions as InspectAction[] | undefined) ?? [],
         params.screenshot === true,
       );
       if (execution.timedOut) throw new Error(`CRM inspector child timed out after ${CHILD_TIMEOUT_MS} ms (trace=${execution.invocationTraceId})`);
