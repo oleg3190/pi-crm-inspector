@@ -77,6 +77,7 @@ export type InspectSuccess = {
   traceId: string;
   pageId: PageId;
   durationMs: number;
+  pageText: string;
   console: ConsoleLog[];
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
@@ -137,6 +138,7 @@ function isFiniteNonNegativeInteger(value: unknown): value is number {
 const MAX_TRACE_ID_LENGTH = 128;
 const MAX_ERROR_MESSAGE_LENGTH = 2048;
 const MAX_LOG_TEXT_LENGTH = 8192;
+const MAX_PAGE_TEXT_LENGTH = 65536;
 
 function isBoundedString(value: unknown, maxLen: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLen;
@@ -199,6 +201,7 @@ function isRequestFailure(value: unknown): value is RequestFailure {
 function isCommonResultFields(value: Record<string, unknown>): boolean {
   if (!isPageId(value.pageId)) return false;
   if (!isFiniteNonNegativeInteger(value.durationMs)) return false;
+  if (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH) return false;
   if (!Array.isArray(value.console) || !value.console.every(isConsoleLog)) return false;
   if (!Array.isArray(value.pageErrors) || !value.pageErrors.every(isPageError)) return false;
   if (!Array.isArray(value.requestFailures) || !value.requestFailures.every(isRequestFailure)) return false;
