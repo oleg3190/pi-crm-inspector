@@ -105,7 +105,7 @@ const InspectPressSchema = Type.Object({
     Type.Literal("Delete"),
   ]),
   waitFor: Type.Optional(InspectWaitForSchema),
-]);
+});
 
 const InspectActionSchema = Type.Union([
   InspectClickSchema,
