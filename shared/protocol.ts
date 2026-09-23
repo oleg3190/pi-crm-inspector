@@ -96,7 +96,7 @@ export type InspectSuccess = {
   droppedEvents: number;
 };
 
-export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText"> & {
+export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions"> & {
   status: "blocked";
   reason: BlockReason;
   pageText?: string;
