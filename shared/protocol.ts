@@ -78,12 +78,62 @@ export type InspectWaitFor = {
   timeoutMs?: number;
 };
 
+export type InspectTarget =
+  | { by: "css"; value: string }
+  | { by: "id"; value: string }
+  | { by: "role"; role: string; name?: string }
+  | { by: "label"; value: string }
+  | { by: "placeholder"; value: string }
+  | { by: "text"; value: string }
+  | { by: "testId"; value: string };
+
+export type InspectAction =
+  | {
+      type: "click";
+      target?: InspectTarget;
+      selector?: string;
+      waitFor?: InspectWaitFor;
+    }
+  | {
+      type: "fill";
+      target: InspectTarget;
+      value: string;
+      sensitive?: boolean;
+      waitFor?: InspectWaitFor;
+    }
+  | {
+      type: "select";
+      target: InspectTarget;
+      option: {
+        value?: string;
+        label?: string;
+      };
+      waitFor?: InspectWaitFor;
+    }
+  | {
+      type: "check";
+      target: InspectTarget;
+      checked: boolean;
+      waitFor?: InspectWaitFor;
+    }
+  | {
+      type: "press";
+      target: InspectTarget;
+      key: string;
+      waitFor?: InspectWaitFor;
+    };
+
 export type InspectInteractionResult = {
-  type: "click";
-  selector: string;
+  type: InspectAction["type"];
+  target?: InspectTarget;
+  selector?: string;
   ok: boolean;
   matched: number;
   url?: string;
+  changed?: boolean;
+  valueLength?: number;
+  checked?: boolean;
+  key?: string;
   waitFor?: InspectWaitFor;
   error?: string;
 };
@@ -180,6 +230,24 @@ const MAX_PAGE_TEXT_LENGTH = 65536;
 const MAX_DOM_SNAPSHOT_LENGTH = 65536;
 const MAX_INTERACTIONS = 8;
 const MAX_ELEMENTS = 100;
+const MAX_ACTION_VALUE_LENGTH = 4096;
+const MAX_ACTION_KEY_LENGTH = 32;
+const MAX_TARGET_TEXT_LENGTH = 512;
+const MAX_ROLE_LENGTH = 64;
+const ALLOWED_PRESS_KEYS = new Set([
+  "Enter",
+  "Escape",
+  "Tab",
+  "ArrowDown",
+  "ArrowUp",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "Space",
+  "Backspace",
+  "Delete",
+]);
 
 function isBoundedString(value: unknown, maxLen: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLen;
@@ -235,14 +303,92 @@ function isInspectWaitFor(value: unknown): value is InspectWaitFor {
   return item.timeoutMs === undefined || (isFiniteNonNegativeInteger(item.timeoutMs) && item.timeoutMs > 0 && item.timeoutMs <= 10_000);
 }
 
+function isInspectTarget(value: unknown): value is InspectTarget {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (typeof item.by !== "string") return false;
+
+  switch (item.by) {
+    case "css":
+    case "id":
+    case "label":
+    case "placeholder":
+    case "text":
+    case "testId":
+      return typeof item.value === "string" && item.value.length > 0 && item.value.length <= MAX_TARGET_TEXT_LENGTH;
+    case "role":
+      return (
+        typeof item.role === "string" &&
+        item.role.length > 0 &&
+        item.role.length <= MAX_ROLE_LENGTH &&
+        (item.name === undefined || (typeof item.name === "string" && item.name.length <= MAX_TARGET_TEXT_LENGTH))
+      );
+    default:
+      return false;
+  }
+}
+
+function isInspectAction(value: unknown): value is InspectAction {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+
+  switch (item.type) {
+    case "click":
+      if (item.target === undefined && (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 512)) return false;
+      if (item.target !== undefined && !isInspectTarget(item.target)) return false;
+      return item.selector === undefined || (typeof item.selector === "string" && item.selector.length > 0 && item.selector.length <= 512);
+    case "fill":
+      return (
+        isInspectTarget(item.target) &&
+        typeof item.value === "string" &&
+        item.value.length <= MAX_ACTION_VALUE_LENGTH &&
+        (item.sensitive === undefined || typeof item.sensitive === "boolean") &&
+        (item.waitFor === undefined || isInspectWaitFor(item.waitFor))
+      );
+    case "select": {
+      if (!isInspectTarget(item.target)) return false;
+      if (!item.option || typeof item.option !== "object") return false;
+      const option = item.option as Record<string, unknown>;
+      const hasValue = option.value !== undefined;
+      const hasLabel = option.label !== undefined;
+      if (!hasValue && !hasLabel) return false;
+      if (hasValue && (typeof option.value !== "string" || option.value.length > MAX_TARGET_TEXT_LENGTH)) return false;
+      if (hasLabel && (typeof option.label !== "string" || option.label.length > MAX_TARGET_TEXT_LENGTH)) return false;
+      return item.waitFor === undefined || isInspectWaitFor(item.waitFor);
+    }
+    case "check":
+      return (
+        isInspectTarget(item.target) &&
+        typeof item.checked === "boolean" &&
+        (item.waitFor === undefined || isInspectWaitFor(item.waitFor))
+      );
+    case "press":
+      return (
+        isInspectTarget(item.target) &&
+        typeof item.key === "string" &&
+        item.key.length > 0 &&
+        item.key.length <= MAX_ACTION_KEY_LENGTH &&
+        ALLOWED_PRESS_KEYS.has(item.key) &&
+        (item.waitFor === undefined || isInspectWaitFor(item.waitFor))
+      );
+    default:
+      return false;
+  }
+}
+
 function isInspectInteractionResult(value: unknown): value is InspectInteractionResult {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
-  if (item.type !== "click") return false;
-  if (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 512) return false;
+  if (!["click", "fill", "select", "check", "press"].includes(String(item.type))) return false;
+  if (item.target !== undefined && !isInspectTarget(item.target)) return false;
+  if (item.selector !== undefined && (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 512)) return false;
   if (typeof item.ok !== "boolean") return false;
   if (!isFiniteNonNegativeInteger(item.matched)) return false;
   if ("url" in item && item.url !== undefined && typeof item.url !== "string") return false;
+  if ("changed" in item && item.changed !== undefined && typeof item.changed !== "boolean") return false;
+  if ("valueLength" in item && item.valueLength !== undefined && (!isFiniteNonNegativeInteger(item.valueLength) || item.valueLength > MAX_ACTION_VALUE_LENGTH)) return false;
+  if ("checked" in item && item.checked !== undefined && typeof item.checked !== "boolean") return false;
+  if ("key" in item && item.key !== undefined && (typeof item.key !== "string" || !ALLOWED_PRESS_KEYS.has(item.key))) return false;
   if ("waitFor" in item && item.waitFor !== undefined && !isInspectWaitFor(item.waitFor)) return false;
   if ("error" in item && item.error !== undefined && (typeof item.error !== "string" || item.error.length > 2048)) return false;
   return true;
