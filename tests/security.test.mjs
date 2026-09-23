@@ -92,6 +92,7 @@ test("protocol guard accepts only valid results", () => {
     traceId: "trace",
     pageId: "dashboard",
     durationMs: 1,
+    pageText: "ipsum Dashboard",
     console: [],
     pageErrors: [],
     requestFailures: [],
