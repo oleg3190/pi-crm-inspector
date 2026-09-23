@@ -303,7 +303,7 @@ function isInspectWaitFor(value: unknown): value is InspectWaitFor {
   return item.timeoutMs === undefined || (isFiniteNonNegativeInteger(item.timeoutMs) && item.timeoutMs > 0 && item.timeoutMs <= 10_000);
 }
 
-function isInspectTarget(value: unknown): value is InspectTarget {
+export function isInspectTarget(value: unknown): value is InspectTarget {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
   if (typeof item.by !== "string") return false;
@@ -328,7 +328,7 @@ function isInspectTarget(value: unknown): value is InspectTarget {
   }
 }
 
-function isInspectAction(value: unknown): value is InspectAction {
+export function isInspectAction(value: unknown): value is InspectAction {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
 
