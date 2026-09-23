@@ -138,6 +138,51 @@ export type InspectInteractionResult = {
   error?: string;
 };
 
+export type InspectAssertion =
+  | {
+      type: "expectText";
+      target: InspectTarget;
+      text: string;
+      exact?: boolean;
+    }
+  | {
+      type: "expectVisible";
+      target: InspectTarget;
+    }
+  | {
+      type: "expectCount";
+      target: InspectTarget;
+      count: number;
+    }
+  | {
+      type: "expectAttribute";
+      target: InspectTarget;
+      name: string;
+      value?: string;
+      present?: boolean;
+    }
+  | {
+      type: "expectUrl";
+      value: string;
+      mode?: "exact" | "contains" | "startsWith";
+    }
+  | {
+      type: "expectElementState";
+      target: InspectTarget;
+      state: "visible" | "hidden" | "enabled" | "disabled" | "checked" | "unchecked" | "expanded" | "collapsed";
+    };
+
+export type InspectAssertionResult = {
+  type: InspectAssertion["type"];
+  target?: InspectTarget;
+  ok: boolean;
+  matched?: number;
+  actualCount?: number;
+  attributePresent?: boolean;
+  state?: InspectAssertion["state"];
+  error?: string;
+};
+
 export type InspectElement = {
   kind: "button" | "link" | "input" | "select" | "textarea" | "checkbox" | "combobox" | "other";
   selector: string;
@@ -163,8 +208,11 @@ export type InspectSuccess = {
   pageText: string;
   domSnapshot: string;
   interactions: InspectInteractionResult[];
+  assertions: InspectAssertionResult[];
+  assertionsPassed: boolean;
   elements: InspectElement[];
   screenshot?: InspectScreenshot;
+  screenshotSuppressed?: "sensitive_action";
   console: ConsoleLog[];
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
@@ -229,11 +277,13 @@ const MAX_LOG_TEXT_LENGTH = 8192;
 const MAX_PAGE_TEXT_LENGTH = 65536;
 const MAX_DOM_SNAPSHOT_LENGTH = 65536;
 const MAX_INTERACTIONS = 8;
+const MAX_ASSERTIONS = 8;
 const MAX_ELEMENTS = 100;
 const MAX_ACTION_VALUE_LENGTH = 4096;
 const MAX_ACTION_KEY_LENGTH = 32;
 const MAX_TARGET_TEXT_LENGTH = 512;
 const MAX_ROLE_LENGTH = 64;
+const MAX_ASSERTION_ATTRIBUTE_LENGTH = 64;
 const ALLOWED_PRESS_KEYS = new Set([
   "Enter",
   "Escape",
@@ -326,6 +376,67 @@ export function isInspectTarget(value: unknown): value is InspectTarget {
     default:
       return false;
   }
+}
+
+export function isInspectAssertion(value: unknown): value is InspectAssertion {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+
+  switch (item.type) {
+    case "expectText":
+      return (
+        isInspectTarget(item.target) &&
+        typeof item.text === "string" &&
+        item.text.length > 0 &&
+        item.text.length <= MAX_ACTION_VALUE_LENGTH &&
+        (item.exact === undefined || typeof item.exact === "boolean")
+      );
+    case "expectVisible":
+      return isInspectTarget(item.target);
+    case "expectCount":
+      return (
+        isInspectTarget(item.target) &&
+        isFiniteNonNegativeInteger(item.count) &&
+        item.count <= MAX_ELEMENTS
+      );
+    case "expectAttribute":
+      return (
+        isInspectTarget(item.target) &&
+        typeof item.name === "string" &&
+        /^[A-Za-z_:][A-Za-z0-9_.:-]{0,63}$/u.test(item.name) &&
+        item.name.length <= MAX_ASSERTION_ATTRIBUTE_LENGTH &&
+        (item.value === undefined || (typeof item.value === "string" && item.value.length <= MAX_ACTION_VALUE_LENGTH)) &&
+        (item.present === undefined || typeof item.present === "boolean")
+      );
+    case "expectUrl":
+      return (
+        typeof item.value === "string" &&
+        item.value.length > 0 &&
+        item.value.length <= MAX_TARGET_TEXT_LENGTH &&
+        (item.mode === undefined || item.mode === "exact" || item.mode === "contains" || item.mode === "startsWith")
+      );
+    case "expectElementState":
+      return (
+        isInspectTarget(item.target) &&
+        ["visible", "hidden", "enabled", "disabled", "checked", "unchecked", "expanded", "collapsed"].includes(String(item.state))
+      );
+    default:
+      return false;
+  }
+}
+
+function isInspectAssertionResult(value: unknown): value is InspectAssertionResult {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (!["expectText", "expectVisible", "expectCount", "expectAttribute", "expectUrl", "expectElementState"].includes(String(item.type))) return false;
+  if (item.target !== undefined && !isInspectTarget(item.target)) return false;
+  if (typeof item.ok !== "boolean") return false;
+  if ("matched" in item && item.matched !== undefined && (!isFiniteNonNegativeInteger(item.matched) || item.matched > MAX_ELEMENTS)) return false;
+  if ("actualCount" in item && item.actualCount !== undefined && (!isFiniteNonNegativeInteger(item.actualCount) || item.actualCount > MAX_ELEMENTS)) return false;
+  if ("attributePresent" in item && item.attributePresent !== undefined && typeof item.attributePresent !== "boolean") return false;
+  if ("state" in item && item.state !== undefined && !["visible", "hidden", "enabled", "disabled", "checked", "unchecked", "expanded", "collapsed"].includes(String(item.state))) return false;
+  if ("error" in item && item.error !== undefined && (typeof item.error !== "string" || item.error.length > 2048)) return false;
+  return true;
 }
 
 export function isInspectAction(value: unknown): value is InspectAction {
@@ -446,6 +557,8 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if (requirePageText && (typeof value.domSnapshot !== "string" || value.domSnapshot.length > MAX_DOM_SNAPSHOT_LENGTH)) return false;
   if (requirePageText && (!Array.isArray(value.interactions) || !value.interactions.every(isInspectInteractionResult) || value.interactions.length > MAX_INTERACTIONS)) return false;
   if (requirePageText && (!Array.isArray(value.elements) || !value.elements.every(isInspectElement) || value.elements.length > MAX_ELEMENTS)) return false;
+  if (requirePageText && (!Array.isArray(value.assertions) || !value.assertions.every(isInspectAssertionResult) || value.assertions.length > MAX_ASSERTIONS)) return false;
+  if (requirePageText && typeof value.assertionsPassed !== "boolean") return false;
   if (requirePageText && value.screenshot !== undefined && !isInspectScreenshot(value.screenshot)) return false;
   if (requirePageText && value.screenshotSuppressed !== undefined && value.screenshotSuppressed !== "sensitive_action") return false;
   if (!requirePageText && value.pageText !== undefined && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
