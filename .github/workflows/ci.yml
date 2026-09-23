@@ -36,5 +36,8 @@ jobs:
           test "$(node -p "require('./node_modules/playwright/package.json').version")" = "1.62.1"
           test "$(node -p "require('./node_modules/playwright-core/package.json').version")" = "1.62.1"
 
+      - name: Install Chromium
+        run: npx playwright install chromium
+
       - name: Typecheck & tests
         run: npm run check
