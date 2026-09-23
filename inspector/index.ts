@@ -84,6 +84,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
 
 const DEFAULT_TEXT_REPLACEMENT = "ipsum";
 const MAX_PAGE_TEXT_CHARS = 65_536;
+const MAX_DOM_SNAPSHOT_CHARS = 65_536;
+const MAX_DOM_NODES = 2_000;
+const MAX_DOM_DEPTH = 12;
+const MAX_CLICK_ACTIONS = 8;
 const DATE_PATTERN = /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
 type TextRange = readonly [number, number];
@@ -231,6 +235,188 @@ async function installTextReplacement(page: Page, replacement: string = DEFAULT_
   await page.addInitScript({ content: buildTextReplacementScript(replacement) });
 }
 
+type InspectAction = {
+  type: "click";
+  selector: string;
+};
+
+async function captureDomSnapshot(page: Page): Promise<string> {
+  const snapshot = await page.locator("body").evaluate((root, options) => {
+    const lines: string[] = [];
+    let count = 0;
+
+    const safeAttrNames = new Set([
+      "id",
+      "class",
+      "role",
+      "name",
+      "type",
+      "aria-label",
+      "aria-expanded",
+      "aria-selected",
+      "aria-checked",
+      "aria-disabled",
+      "aria-hidden",
+      "disabled",
+      "checked",
+      "selected",
+      "tabindex",
+      "placeholder",
+    ]);
+
+    const textOf = (element: Element): string => {
+      if (element.children.length !== 0) return "";
+      return (element.textContent ?? "").replace(/\\s+/gu, " ").trim().slice(0, 240);
+    };
+
+    const escape = (value: string): string => value.replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;");
+
+    const formatAttrs = (element: Element): string => {
+      const attrs: string[] = [];
+      for (const attr of Array.from(element.attributes)) {
+        if (!safeAttrNames.has(attr.name)) continue;
+        if (attr.value.length === 0) attrs.push(attr.name);
+        else attrs.push(`${attr.name}="${escape(attr.value.slice(0, 240))}"`);
+      }
+
+      const tag = element.tagName.toLowerCase();
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const hidden = style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0;
+      const clickable =
+        tag === "a" ||
+        tag === "button" ||
+        element.getAttribute("role") === "button" ||
+        element.hasAttribute("tabindex");
+
+      if (clickable) attrs.push("clickable");
+      if (hidden) attrs.push("hidden");
+
+      if (tag === "svg" || tag === "canvas" || tag === "img") {
+        attrs.push(`rendered="${Math.round(rect.width)}x${Math.round(rect.height)}"`);
+      }
+
+      if (tag === "svg") {
+        const viewBox = element.getAttribute("viewBox");
+        if (viewBox) attrs.push(`viewBox="${escape(viewBox.slice(0, 120))}"`);
+      }
+
+      if (tag === "canvas") {
+        const canvas = element as HTMLCanvasElement;
+        attrs.push(`bitmap="${canvas.width}x${canvas.height}"`);
+      }
+
+      if (tag === "img") {
+        const image = element as HTMLImageElement;
+        attrs.push(`loaded="${image.complete && image.naturalWidth > 0}"`);
+        attrs.push(`natural="${image.naturalWidth}x${image.naturalHeight}"`);
+        const alt = image.getAttribute("alt");
+        if (alt) attrs.push(`alt="${escape(alt.slice(0, 240))}"`);
+      }
+
+      return attrs.length === 0 ? "" : ` ${attrs.join(" ")}`;
+    };
+
+    const visit = (element: Element, depth: number): void => {
+      if (count >= options.maxNodes) {
+        lines.push(`${"  ".repeat(depth)}<!-- DOM node limit reached -->`);
+        return;
+      }
+
+      count++;
+      const tag = element.tagName.toLowerCase();
+      const attrs = formatAttrs(element);
+      const text = textOf(element);
+      const suffix = text ? ` ${text}` : "";
+
+      if (element.children.length === 0) {
+        lines.push(`${"  ".repeat(depth)}<${tag}${attrs}>${escape(suffix)}</${tag}>`);
+        return;
+      }
+
+      lines.push(`${"  ".repeat(depth)}<${tag}${attrs}>${escape(suffix)}`);
+      if (depth >= options.maxDepth) {
+        lines.push(`${"  ".repeat(depth + 1)}<!-- max DOM depth reached -->`);
+        return;
+      }
+
+      for (const child of Array.from(element.children)) visit(child, depth + 1);
+      lines.push(`${"  ".repeat(depth)}</${tag}>`);
+    };
+
+    visit(root, 0);
+    return lines.join("\\n");
+  }, { maxNodes: MAX_DOM_NODES, maxDepth: MAX_DOM_DEPTH });
+
+  if (snapshot.length <= MAX_DOM_SNAPSHOT_CHARS) return snapshot;
+  return `${snapshot.slice(0, MAX_DOM_SNAPSHOT_CHARS - 12)}\\n<!-- truncated -->`;
+}
+
+async function runInspectActions(
+  page: Page,
+  actions: readonly InspectAction[],
+  signal: AbortSignal,
+): Promise<InspectInteractionResult[]> {
+  if (actions.length > MAX_CLICK_ACTIONS) {
+    throw new Error(`Too many inspect actions; maximum is ${MAX_CLICK_ACTIONS}`);
+  }
+
+  const results: InspectInteractionResult[] = [];
+
+  for (const action of actions) {
+    if (action.type !== "click") {
+      throw new Error("Unsupported inspect action");
+    }
+    const selector = action.selector.trim();
+    if (!selector || selector.length > 512) {
+      results.push({ type: "click", selector, ok: false, matched: 0, error: "Invalid selector" });
+      continue;
+    }
+
+    try {
+      const locator = page.locator(selector);
+      const matched = await locator.count();
+      if (matched === 0) {
+        results.push({
+          type: "click",
+          selector,
+          ok: false,
+          matched,
+          url: page.url(),
+          error: "Selector matched no elements",
+        });
+        continue;
+      }
+
+      await withTimeout(locator.first().click({ timeout: CRM_POLICY.limits.operationTimeoutMs }), CRM_POLICY.limits.operationTimeoutMs, signal);
+      await withTimeout(
+        new Promise<void>((resolve) => setTimeout(resolve, 150)),
+        500,
+        signal,
+      );
+
+      results.push({
+        type: "click",
+        selector,
+        ok: true,
+        matched,
+        url: page.url(),
+      });
+    } catch (error) {
+      results.push({
+        type: "click",
+        selector,
+        ok: false,
+        matched: 0,
+        url: page.url(),
+        error: scrubSecrets(error instanceof Error ? error.message : String(error), []),
+      });
+    }
+  }
+
+  return results;
+}
+
 function requireConfiguration(): void {
   // URL destinations are intentionally unrestricted.
 }
@@ -289,7 +475,12 @@ async function closeContextAndBrowser(
   await closeWithTimeout(browser, "browser");
 }
 
-async function inspectPage(pageId: PageId, externalSignal?: AbortSignal, customPath?: string): Promise<InspectResult> {
+async function inspectPage(
+  pageId: PageId,
+  externalSignal?: AbortSignal,
+  customPath?: string,
+  actions: readonly InspectAction[] = [],
+): Promise<InspectResult> {
   const traceId = randomUUID();
   const startedAt = Date.now();
   const consoleEvents: ConsoleLog[] = [];
@@ -543,11 +734,13 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal, customP
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
     if (derivedBlock) return blockedResult(derivedBlock);
 
+    const interactions = await runInspectActions(mainPage, actions, signal);
     const rawPageText = await mainPage.locator("body").innerText();
     const scrubbedPageText = scrubSecrets(rawPageText, secrets);
     const pageText = scrubbedPageText.length <= MAX_PAGE_TEXT_CHARS
       ? scrubbedPageText
       : `${scrubbedPageText.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
+    const domSnapshot = await captureDomSnapshot(mainPage);
 
     return {
       status: "success",
@@ -555,6 +748,8 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal, customP
       pageId,
       durationMs: Date.now() - startedAt,
       pageText,
+      domSnapshot,
+      interactions,
       console: consoleEvents,
       pageErrors,
       requestFailures,
@@ -588,6 +783,11 @@ export default function (pi: ExtensionAPI) {
 
   let invocationUsed = false;
 
+  const InspectActionSchema = Type.Object({
+    type: Type.Literal("click"),
+    selector: Type.String({ minLength: 1, maxLength: 512 }),
+  });
+
   pi.registerTool({
     name: TOOL_NAME,
     label: "CRM Inspector",
@@ -605,6 +805,12 @@ export default function (pi: ExtensionAPI) {
       page_id: PageIdSchema,
       path: Type.Optional(
         Type.String({ description: "Relative path on the CRM app origin; required when page_id='custom'." }),
+      ),
+      actions: Type.Optional(
+        Type.Array(InspectActionSchema, {
+          maxItems: MAX_CLICK_ACTIONS,
+          description: "Optional safe UI actions. Currently supports CSS/Playwright selector clicks.",
+        }),
       ),
     }),
     async execute(_toolCallId, params, signal) {
@@ -627,7 +833,12 @@ export default function (pi: ExtensionAPI) {
       }
 
       invocationUsed = true;
-      const result = await inspectPage(params.page_id, signal, params.path as string | undefined);
+      const result = await inspectPage(
+        params.page_id,
+        signal,
+        params.path as string | undefined,
+        (params.actions as InspectAction[] | undefined) ?? [],
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(result) }],
         details: result,
