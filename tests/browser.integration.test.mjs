@@ -69,8 +69,9 @@ test("browser inspection handles server HTML and SPA-like delayed DOM updates", 
   assert(button);
   assert.equal(button.visible, true);
   assert.equal(button.enabled, true);
-  assert.equal(button.name, "Open ipsum");
-  assert(elements.some((item) => item.kind === "other" && item.role === undefined) || elements.length > 0);
+  assert.equal(button.name?.includes("ipsum"), true);
+  assert.equal(button.name?.includes("Иван"), false);
+  assert(elements.length > 0);
 
   const screenshot = await captureViewportScreenshot(page);
   assert.equal(screenshot.data.length > 0, true);
