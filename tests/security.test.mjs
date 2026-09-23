@@ -153,8 +153,8 @@ test("second invocationUsed → second call returns error with terminate:true", 
   };
   const inspector = await import("../inspector/index.ts");
   inspector.default(mockPi);
-  const result1 = await mockPi.execute(null, { page_id: "dashboard" }, {});
-  const result2 = await mockPi.execute(null, { page_id: "dashboard" }, {});
+  const result1 = await mockPi.execute(null, { page_id: "dashboard" }, undefined);
+  const result2 = await mockPi.execute(null, { page_id: "dashboard" }, undefined);
   assert.equal(result2.terminate, true);
   assert.equal(result2.isError, true);
   assert.equal(result2.details.status, "error");
