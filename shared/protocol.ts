@@ -179,7 +179,7 @@ export type InspectAssertionResult = {
   matched?: number;
   actualCount?: number;
   attributePresent?: boolean;
-  state?: InspectAssertion["state"];
+  state?: "visible" | "hidden" | "enabled" | "disabled" | "checked" | "unchecked" | "expanded" | "collapsed";
   error?: string;
 };
 
