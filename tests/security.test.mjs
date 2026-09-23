@@ -67,11 +67,24 @@ test("secrets are redacted", () => {
   assert(!result.includes("token=secret"));
 });
 
-test("request paths are exact except explicit subtree rules", () => {
+test("request URL/path restrictions are disabled", () => {
   assert.deepEqual(PAGE_IDS, ["dashboard", "billing_logs", "auth_logs", "custom"]);
-  for (const id of ["dashboard", "billing_logs", "auth_logs"]) assert(getPageConfig(id).allowedRequestPaths.includes("/login"));
-  assert.equal(isAllowedPath("/api/dashboard/summary", getPageConfig("dashboard").allowedRequestPaths), true);
-  assert.equal(isAllowedPath("/api/dashboard/admin", getPageConfig("dashboard").allowedRequestPaths), false);
+
+  const pageConfig = getPageConfig("dashboard");
+  const makeRequest = (url, method = "GET") => ({
+    url: () => url,
+    method: () => method,
+    resourceType: () => "document",
+  });
+
+  assert.deepEqual(
+    isAllowedRequest(makeRequest("https://example.com/completely/arbitrary/path?foo=bar"), pageConfig, "authenticated"),
+    { allowed: true },
+  );
+  assert.deepEqual(
+    isAllowedRequest(makeRequest("http://10.0.0.5:8080/unlisted", "POST"), pageConfig, "authenticated"),
+    { allowed: true },
+  );
 });
 
 test("protocol guard accepts only valid results", () => {
