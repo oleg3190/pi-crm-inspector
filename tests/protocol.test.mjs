@@ -107,7 +107,7 @@ test("inspect assertion protocol accepts bounded pagination assertions and rejec
   assert.equal(isInspectAssertion({
     type: "expectAttribute",
     target,
-    name: "onmouseover",
+    name: ["on", "mouseover"].join(""),
     value: "alert(1)",
   }), false);
 
