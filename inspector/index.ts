@@ -31,8 +31,8 @@ import type {
   InspectElement,
   InspectScreenshot,
   InspectWaitFor,
-  type InspectAction,
-  type InspectTarget,
+  InspectAction,
+  InspectTarget,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 
@@ -1183,7 +1183,7 @@ export default function (pi: ExtensionAPI) {
               }),
             ),
           }),
-          { maxItems: MAX_CLICK_ACTIONS, description: "Optional UI actions. Clicks may wait for a concrete DOM state after the click." },
+          { maxItems: MAX_INSPECT_ACTIONS, description: "Optional deterministic UI actions. Each action may wait for a concrete DOM state." },
         ),
       ),
       screenshot: Type.Optional(Type.Boolean({ description: "Capture a viewport screenshot after actions and DOM stabilization." })),
