@@ -343,6 +343,7 @@ export async function captureDomSnapshot(page: Page): Promise<string> {
   const snapshot = await page.locator("body").evaluate((root, options) => {
     const lines: string[] = [];
     let count = 0;
+    const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
 
     const safeAttrNames = new Set([
       "id",
@@ -372,7 +373,7 @@ export async function captureDomSnapshot(page: Page): Promise<string> {
           return String.fromCharCode(0) + String(protectedParts.length - 1) + String.fromCharCode(0);
         },
       );
-      const masked = protectedText.replace(/\\d/gu, "7").replace(/[\\p{L}\\p{M}]+/gu, "ipsum");
+      const masked = protectedText.replace(/\d/gu, "7").replace(/[\p{L}\p{M}]+/gu, "ipsum");
       return masked.replace(new RegExp(String.fromCharCode(0) + "(\\\\d+)" + String.fromCharCode(0), "gu"), (_match, index) => protectedParts[Number(index)] ?? "");
     };
 
@@ -438,6 +439,7 @@ export async function captureDomSnapshot(page: Page): Promise<string> {
         return;
       }
 
+      if (ignoredTags.has(element.tagName)) return;
       count++;
       const tag = element.tagName.toLowerCase();
       const attrs = formatAttrs(element);
