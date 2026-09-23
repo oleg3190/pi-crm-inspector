@@ -116,6 +116,7 @@ test("browser inspection supports deterministic form actions", async (t) => {
       </body>
       <script>
         const result = document.querySelector("#filter-result");
+        document.querySelector("#filters").addEventListener("submit", (event) => event.preventDefault());
         const status = document.querySelector("#status");
         const options = document.querySelector("#options");
         status.addEventListener("click", () => {
