@@ -88,6 +88,8 @@ const MAX_DOM_SNAPSHOT_CHARS = 65_536;
 const MAX_DOM_NODES = 2_000;
 const MAX_DOM_DEPTH = 12;
 const MAX_CLICK_ACTIONS = 8;
+const DOM_STABILITY_QUIET_MS = 350;
+const DOM_STABILITY_MAX_MS = 3_000;
 const DATE_PATTERN = /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
 type TextRange = readonly [number, number];
@@ -352,6 +354,56 @@ async function captureDomSnapshot(page: Page): Promise<string> {
   return `${snapshot.slice(0, MAX_DOM_SNAPSHOT_CHARS - 12)}\\n<!-- truncated -->`;
 }
 
+async function waitForDomStability(page: Page, signal: AbortSignal): Promise<void> {
+  await withTimeout(
+    page.locator("body").evaluate(({ quietMs, maxMs }) => new Promise<void>((resolve) => {
+      const root = document.body;
+      if (!root) {
+        resolve();
+        return;
+      }
+
+      let quietTimer: ReturnType<typeof setTimeout> | undefined;
+      let maxTimer: ReturnType<typeof setTimeout> | undefined;
+      let finished = false;
+
+      const cleanup = () => {
+        if (quietTimer) clearTimeout(quietTimer);
+        if (maxTimer) clearTimeout(maxTimer);
+        observer.disconnect();
+      };
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        resolve();
+      };
+      const armQuietTimer = () => {
+        if (quietTimer) clearTimeout(quietTimer);
+        quietTimer = setTimeout(finish, quietMs);
+      };
+      const isRelevantMutation = (mutation: MutationRecord): boolean => {
+        const element = mutation.target instanceof Element
+          ? mutation.target
+          : mutation.target.parentElement;
+        if (element?.closest("script,style,noscript,template")) return false;
+        return mutation.type === "childList"
+          ? mutation.addedNodes.length > 0 || mutation.removedNodes.length > 0
+          : true;
+      };
+
+      const observer = new MutationObserver((mutations) => {
+        if (mutations.some(isRelevantMutation)) armQuietTimer();
+      });
+      observer.observe(root, { childList: true, characterData: true, subtree: true });
+      armQuietTimer();
+      maxTimer = setTimeout(finish, maxMs);
+    }), { quietMs: DOM_STABILITY_QUIET_MS, maxMs: DOM_STABILITY_MAX_MS }),
+    DOM_STABILITY_MAX_MS + 500,
+    signal,
+  );
+}
+
 async function runInspectActions(
   page: Page,
   actions: readonly InspectAction[],
@@ -389,11 +441,7 @@ async function runInspectActions(
       }
 
       await withTimeout(locator.first().click({ timeout: CRM_POLICY.limits.operationTimeoutMs }), CRM_POLICY.limits.operationTimeoutMs, signal);
-      await withTimeout(
-        new Promise<void>((resolve) => setTimeout(resolve, 150)),
-        500,
-        signal,
-      );
+      await waitForDomStability(page, signal);
 
       results.push({
         type: "click",
@@ -730,6 +778,7 @@ async function inspectPage(
       CRM_POLICY.limits.postLoginSettleMs + 500,
       signal,
     );
+    await waitForDomStability(mainPage, signal);
 
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
     if (derivedBlock) return blockedResult(derivedBlock);
