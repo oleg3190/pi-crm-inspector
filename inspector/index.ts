@@ -83,15 +83,95 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
 }
 
 const DEFAULT_TEXT_REPLACEMENT = "ipsum delorum";
+const DATE_PATTERN = /(?<!\d)\d{2}[.-]\d{2}[.-]\d{4}(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
 export function anonymizeTextContent(text: string, replacement: string = DEFAULT_TEXT_REPLACEMENT): string {
+  let result = "";
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(DATE_PATTERN)) {
+    const index = match.index ?? 0;
+    result += anonymizeNonDateText(text.slice(lastIndex, index), replacement);
+    result += match[0];
+    lastIndex = index + match[0].length;
+  }
+
+  return result + anonymizeNonDateText(text.slice(lastIndex), replacement);
+}
+
+function anonymizeNonDateText(text: string, replacement: string): string {
   return text
     .replace(/\d/gu, "7")
     .replace(/[^\d\s\p{P}]+/gu, replacement);
 }
 
 function buildTextReplacementScript(replacement: string = DEFAULT_TEXT_REPLACEMENT): string {
-  return "(() => {\n  const replacement = __REPLACEMENT__;\n  const ignoredTags = new Set([\"SCRIPT\", \"STYLE\", \"NOSCRIPT\", \"TEXTAREA\", \"TEMPLATE\"]);\n\n  const anonymizeTextContent = (text) => text\n    .replace(/\\d/gu, \"7\")\n    .replace(/[^\\d\\s\\p{P}]+/gu, replacement);\n\n  const replaceTextNode = (node) => {\n    const parent = node.parentElement;\n    if (!parent || ignoredTags.has(parent.tagName)) return;\n    const text = node.nodeValue ?? \"\";\n    if (!text.trim()) return;\n    const anonymized = anonymizeTextContent(text);\n    if (text !== anonymized) node.nodeValue = anonymized;\n  };\n\n  const replaceSubtreeText = (root) => {\n    if (root.nodeType === Node.TEXT_NODE) {\n      replaceTextNode(root);\n      return;\n    }\n    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);\n    const textNodes = [];\n    let node;\n    while ((node = walker.nextNode())) textNodes.push(node);\n    for (const textNode of textNodes) replaceTextNode(textNode);\n  };\n\n  const install = () => {\n    const root = document.documentElement || document;\n    replaceSubtreeText(root);\n    const observer = new MutationObserver((mutations) => {\n      for (const mutation of mutations) {\n        if (mutation.type === \"characterData\") {\n          replaceTextNode(mutation.target);\n          continue;\n        }\n        for (const addedNode of mutation.addedNodes) replaceSubtreeText(addedNode);\n      }\n    });\n    observer.observe(root, { childList: true, characterData: true, subtree: true });\n  };\n\n  if (document.documentElement) install();\n  else document.addEventListener(\"DOMContentLoaded\", install, { once: true });\n})();".replace("__REPLACEMENT__", () => JSON.stringify(replacement));
+  const script = [
+    "(() => {",
+    "  const replacement = __REPLACEMENT__;",
+    "  const datePattern = /(?<!\\d)\\d{2}[.-]\\d{2}[.-]\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?(?!\\d)/gu;",
+    '  const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "TEMPLATE"]);',
+    "",
+    "  const anonymizeNonDateText = (text) => text",
+    '    .replace(/\\d/gu, "7")',
+    '    .replace(/[^\\d\\s\\p{P}]+/gu, replacement);',
+    "",
+    "  const anonymizeTextContent = (text) => {",
+    '    let result = "";',
+    "    let lastIndex = 0;",
+    "",
+    "    for (const match of text.matchAll(datePattern)) {",
+    "      const index = match.index ?? 0;",
+    "      result += anonymizeNonDateText(text.slice(lastIndex, index));",
+    "      result += match[0];",
+    "      lastIndex = index + match[0].length;",
+    "    }",
+    "",
+    "    return result + anonymizeNonDateText(text.slice(lastIndex));",
+    "  };",
+    "",
+    "  const replaceTextNode = (node) => {",
+    "    const parent = node.parentElement;",
+    "    if (!parent || ignoredTags.has(parent.tagName) || parent.closest(\"button\")) return;",
+    '    const text = node.nodeValue ?? "";',
+    "    if (!text.trim()) return;",
+    "    const anonymized = anonymizeTextContent(text);",
+    "    if (text !== anonymized) node.nodeValue = anonymized;",
+    "  };",
+    "",
+    "  const replaceSubtreeText = (root) => {",
+    "    if (root.nodeType === Node.TEXT_NODE) {",
+    "      replaceTextNode(root);",
+    "      return;",
+    "    }",
+    "    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);",
+    "    const textNodes = [];",
+    "    let node;",
+    "    while ((node = walker.nextNode())) textNodes.push(node);",
+    "    for (const textNode of textNodes) replaceTextNode(textNode);",
+    "  };",
+    "",
+    "  const install = () => {",
+    "    const root = document.documentElement || document;",
+    "    replaceSubtreeText(root);",
+    "    const observer = new MutationObserver((mutations) => {",
+    "      for (const mutation of mutations) {",
+    '        if (mutation.type === "characterData") {',
+    "          replaceTextNode(mutation.target);",
+    "          continue;",
+    "        }",
+    "        for (const addedNode of mutation.addedNodes) replaceSubtreeText(addedNode);",
+    "      }",
+    "    });",
+    "    observer.observe(root, { childList: true, characterData: true, subtree: true });",
+    "  };",
+    "",
+    "  if (document.documentElement) install();",
+    '  else document.addEventListener("DOMContentLoaded", install, { once: true });',
+    "})();",
+  ].join("\n");
+
+  return script.replace("__REPLACEMENT__", () => JSON.stringify(replacement));
 }
 
 async function installTextReplacement(page: Page, replacement: string = DEFAULT_TEXT_REPLACEMENT): Promise<void> {
