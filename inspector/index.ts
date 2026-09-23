@@ -83,7 +83,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
 }
 
 const DEFAULT_TEXT_REPLACEMENT = "ipsum delorum";
-const DATE_PATTERN = /(?<!\\d)(?:\\d{2}[.\\/-]\\d{2}[.\\/-]\\d{4}|\\d{4}-\\d{2}-\\d{2})(?:\\s+\\d{2}:\\d{2}:\\d{2})?(?!\\d)/gu;
+const DATE_PATTERN = /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
 type TextRange = readonly [number, number];
 
@@ -96,8 +96,8 @@ function findDateRanges(text: string): TextRange[] {
 
 function anonymizeNonDateText(text: string, replacement: string): string {
   return text
-    .replace(/\\d/gu, "7")
-    .replace(/[^\\d\\s\\p{P}]+/gu, replacement);
+    .replace(/\d/gu, "7")
+    .replace(/[^\d\s\p{P}]+/gu, replacement);
 }
 
 function anonymizeSegment(text: string, protectedRanges: TextRange[], offset: number, replacement: string): string {
@@ -144,7 +144,7 @@ function buildTextReplacementScript(replacement: string = DEFAULT_TEXT_REPLACEME
   const script = [
     "(() => {",
     "  const replacement = __REPLACEMENT__;",
-    "  const datePattern = /(?<!\\\\d)(?:\\\\d{2}[.\\\\/-]\\\\d{2}[.\\\\/-]\\\\d{4}|\\\\d{4}-\\\\d{2}-\\\\d{2})(?:\\\\s+\\\\d{2}:\\\\d{2}:\\\\d{2})?(?!\\\\d)/gu;",
+    "  const datePattern = /(?<!\\d)(?:\\d{2}[.\\/-]\\d{2}[.\\/-]\\d{4}|\\d{4}-\\d{2}-\\d{2})(?:\\s+\\d{2}:\\d{2}:\\d{2})?(?!\\d)/gu;",
     '  const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "TEMPLATE"]);',
     "",
     "  const findDateRanges = (text) => [...text.matchAll(datePattern)].map((match) => {",
@@ -153,8 +153,8 @@ function buildTextReplacementScript(replacement: string = DEFAULT_TEXT_REPLACEME
     "  });",
     "",
     "  const anonymizeNonDateText = (text) => text",
-    '    .replace(/\\\\d/gu, "7")',
-    '    .replace(/[^\\\\d\\\\s\\\\p{P}]+/gu, replacement);',
+    '    .replace(/\\d/gu, "7")',
+    '    .replace(/[^\d\s\p{P}]+/gu, replacement);',
     "",
     "  const anonymizeSegment = (text, protectedRanges, offset) => {",
     '    let result = "";',
