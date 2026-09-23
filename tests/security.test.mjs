@@ -26,6 +26,16 @@ test("query allowlist is deny-by-default", () => {
   assert.equal(isAllowedQuery("?page=1", { allowedKeys: ["page"] }), true);
 });
 
+test("text anonymization preserves dates exactly", () => {
+  const input = "Событие 29.10.2025 12:53:47 и 29.10.2025  29-10-2025, номер 12345";
+  const output = anonymizeTextContent(input);
+
+  assert.equal(
+    output,
+    "ipsum 29.10.2025 12:53:47 ipsum 29.10.2025  29-10-2025, ipsum 77777",
+  );
+});
+
 test("text anonymization preserves digit count and number-like formatting", () => {
   const input = "Иван Иванов: заказ №12345, сумма 1 234,56 руб. Телефон +372 555-1234";
   const output = anonymizeTextContent(input);
