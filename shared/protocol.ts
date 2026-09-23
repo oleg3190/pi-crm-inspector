@@ -72,13 +72,37 @@ export type RequestFailure = {
   truncated?: boolean;
 };
 
+export type InspectWaitFor = {
+  selector: string;
+  state: "visible" | "hidden" | "attached" | "detached";
+  timeoutMs?: number;
+};
+
 export type InspectInteractionResult = {
   type: "click";
   selector: string;
   ok: boolean;
   matched: number;
   url?: string;
+  waitFor?: InspectWaitFor;
   error?: string;
+};
+
+export type InspectElement = {
+  kind: "button" | "link" | "input" | "select" | "textarea" | "checkbox" | "combobox" | "other";
+  selector: string;
+  role?: string;
+  name?: string;
+  visible: boolean;
+  enabled?: boolean;
+  checked?: boolean;
+  expanded?: boolean;
+};
+
+export type InspectScreenshot = {
+  mimeType: "image/png";
+  width: number;
+  height: number;
 };
 
 export type InspectSuccess = {
@@ -89,6 +113,8 @@ export type InspectSuccess = {
   pageText: string;
   domSnapshot: string;
   interactions: InspectInteractionResult[];
+  elements: InspectElement[];
+  screenshot?: InspectScreenshot;
   console: ConsoleLog[];
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
@@ -96,7 +122,7 @@ export type InspectSuccess = {
   droppedEvents: number;
 };
 
-export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions"> & {
+export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "elements" | "screenshot"> & {
   status: "blocked";
   reason: BlockReason;
   pageText?: string;
@@ -153,6 +179,7 @@ const MAX_LOG_TEXT_LENGTH = 8192;
 const MAX_PAGE_TEXT_LENGTH = 65536;
 const MAX_DOM_SNAPSHOT_LENGTH = 65536;
 const MAX_INTERACTIONS = 8;
+const MAX_ELEMENTS = 100;
 
 function isBoundedString(value: unknown, maxLen: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLen;
@@ -200,6 +227,14 @@ function isPageError(value: unknown): value is PageError {
   );
 }
 
+function isInspectWaitFor(value: unknown): value is InspectWaitFor {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 512) return false;
+  if (!(item.state === "visible" || item.state === "hidden" || item.state === "attached" || item.state === "detached")) return false;
+  return item.timeoutMs === undefined || (isFiniteNonNegativeInteger(item.timeoutMs) && item.timeoutMs > 0 && item.timeoutMs <= 10_000);
+}
+
 function isInspectInteractionResult(value: unknown): value is InspectInteractionResult {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
@@ -208,8 +243,38 @@ function isInspectInteractionResult(value: unknown): value is InspectInteraction
   if (typeof item.ok !== "boolean") return false;
   if (!isFiniteNonNegativeInteger(item.matched)) return false;
   if ("url" in item && item.url !== undefined && typeof item.url !== "string") return false;
+  if ("waitFor" in item && item.waitFor !== undefined && !isInspectWaitFor(item.waitFor)) return false;
   if ("error" in item && item.error !== undefined && (typeof item.error !== "string" || item.error.length > 2048)) return false;
   return true;
+}
+
+function isInspectElement(value: unknown): value is InspectElement {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (![ "button", "link", "input", "select", "textarea", "checkbox", "combobox", "other" ].includes(String(item.kind))) return false;
+  if (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 1024) return false;
+  if (typeof item.visible !== "boolean") return false;
+  for (const key of ["role", "name"]) {
+    if (key in item && item[key] !== undefined && typeof item[key] !== "string") return false;
+  }
+  for (const key of ["enabled", "checked", "expanded"]) {
+    if (key in item && item[key] !== undefined && typeof item[key] !== "boolean") return false;
+  }
+  return true;
+}
+
+function isInspectScreenshot(value: unknown): value is InspectScreenshot {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  return (
+    item.mimeType === "image/png" &&
+    isFiniteNonNegativeInteger(item.width) &&
+    item.width > 0 &&
+    item.width <= 4096 &&
+    isFiniteNonNegativeInteger(item.height) &&
+    item.height > 0 &&
+    item.height <= 4096
+  );
 }
 
 function isRequestFailure(value: unknown): value is RequestFailure {
@@ -230,6 +295,8 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if (requirePageText && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
   if (requirePageText && (typeof value.domSnapshot !== "string" || value.domSnapshot.length > MAX_DOM_SNAPSHOT_LENGTH)) return false;
   if (requirePageText && (!Array.isArray(value.interactions) || !value.interactions.every(isInspectInteractionResult) || value.interactions.length > MAX_INTERACTIONS)) return false;
+  if (requirePageText && (!Array.isArray(value.elements) || !value.elements.every(isInspectElement) || value.elements.length > MAX_ELEMENTS)) return false;
+  if (requirePageText && value.screenshot !== undefined && !isInspectScreenshot(value.screenshot)) return false;
   if (!requirePageText && value.pageText !== undefined && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
   if (!Array.isArray(value.console) || !value.console.every(isConsoleLog)) return false;
   if (!Array.isArray(value.pageErrors) || !value.pageErrors.every(isPageError)) return false;
