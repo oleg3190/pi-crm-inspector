@@ -552,11 +552,10 @@ export function resolveInspectTarget(page: Page, target: InspectTarget): Locator
 }
 
 function actionTarget(action: InspectAction): { target: InspectTarget; selector?: string } {
-  if (action.type === "click") {
-    if (action.target) return { target: action.target };
-    if (action.selector) return { target: { by: "css", value: action.selector }, selector: action.selector };
-  }
-  throw new Error(`Action ${action.type} requires a structured target`);
+  if (action.type !== "click") return { target: action.target };
+  if (action.target) return { target: action.target };
+  if (action.selector) return { target: { by: "css", value: action.selector }, selector: action.selector };
+  throw new Error("Click action requires a target or legacy selector");
 }
 
 async function waitForActionCompletion(
