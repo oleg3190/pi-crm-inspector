@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.ts";
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
-import { anonymizeTextContent } from "../inspector/index.ts";
-import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest } from "../inspector/security.ts";
+import { anonymizeTextContent, anonymizeTextSegments } from "../inspector/index.ts";
+import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest, isAllowedDocumentUrl } from "../inspector/security.ts";
 import { buildChildEnv, extractChildToolResult } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
@@ -36,6 +36,20 @@ test("text anonymization preserves dates exactly", () => {
   );
 });
 
+test("date stays intact when split across DOM text nodes", () => {
+  assert.deepEqual(
+    anonymizeTextSegments(["Событие ", "29.10.", "2025", " 12:53:47"]),
+    ["ipsum ", "29.10.", "2025", " 12:53:47"],
+  );
+});
+
+test("ISO date is preserved", () => {
+  assert.equal(
+    anonymizeTextContent("Создано 2025-10-29, номер 12345"),
+    "ipsum 2025-10-29, ipsum 77777",
+  );
+});
+
 test("text anonymization preserves digit count and number-like formatting", () => {
   const input = "Иван Иванов: заказ №12345, сумма 1 234,56 руб. Телефон +372 555-1234";
   const output = anonymizeTextContent(input);
@@ -54,8 +68,8 @@ test("secrets are redacted", () => {
 });
 
 test("request paths are exact except explicit subtree rules", () => {
-  assert.deepEqual(PAGE_IDS, ["dashboard", "billing_logs", "auth_logs"]);
-  for (const id of PAGE_IDS) assert(getPageConfig(id).allowedRequestPaths.includes("/login"));
+  assert.deepEqual(PAGE_IDS, ["dashboard", "billing_logs", "auth_logs", "custom"]);
+  for (const id of ["dashboard", "billing_logs", "auth_logs"]) assert(getPageConfig(id).allowedRequestPaths.includes("/login"));
   assert.equal(isAllowedPath("/api/dashboard/summary", getPageConfig("dashboard").allowedRequestPaths), true);
   assert.equal(isAllowedPath("/api/dashboard/admin", getPageConfig("dashboard").allowedRequestPaths), false);
 });
