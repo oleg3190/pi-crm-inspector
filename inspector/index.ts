@@ -82,7 +82,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
   }
 }
 
-const DEFAULT_TEXT_REPLACEMENT = "ipsum delorum";
+const DEFAULT_TEXT_REPLACEMENT = "ipsum";
 const DATE_PATTERN = /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
 type TextRange = readonly [number, number];
