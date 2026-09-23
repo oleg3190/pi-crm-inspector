@@ -172,7 +172,7 @@ export type InspectSuccess = {
   droppedEvents: number;
 };
 
-export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "elements" | "screenshot"> & {
+export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "elements" | "screenshot" | "screenshotSuppressed"> & {
   status: "blocked";
   reason: BlockReason;
   pageText?: string;
@@ -333,10 +333,14 @@ export function isInspectAction(value: unknown): value is InspectAction {
   const item = value as Record<string, unknown>;
 
   switch (item.type) {
-    case "click":
-      if (item.target === undefined && (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 512)) return false;
-      if (item.target !== undefined && !isInspectTarget(item.target)) return false;
-      return item.selector === undefined || (typeof item.selector === "string" && item.selector.length > 0 && item.selector.length <= 512);
+    case "click": {
+      const hasTarget = item.target !== undefined;
+      const hasSelector = item.selector !== undefined;
+      if (hasTarget === hasSelector) return false;
+      if (hasTarget && !isInspectTarget(item.target)) return false;
+      if (hasSelector && (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 512)) return false;
+      return item.waitFor === undefined || isInspectWaitFor(item.waitFor);
+    }
     case "fill":
       return (
         isInspectTarget(item.target) &&
