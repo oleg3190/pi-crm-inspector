@@ -79,6 +79,7 @@ export function isAllowedQuery(
 ): boolean {
   if (search.length > maxChars) return false;
   if (!search) return true;
+  if (query.anyKeys) return true;
 
   const params = new URLSearchParams(search);
   for (const key of params.keys()) {

@@ -1,4 +1,5 @@
-export const PAGE_IDS = ["dashboard", "billing_logs", "auth_logs"] as const;
+export const PAGE_IDS = ["dashboard", "billing_logs", "auth_logs", "custom"] as const;
+export const CUSTOM_PAGE_ID = "custom" as const;
 export type PageId = (typeof PAGE_IDS)[number];
 
 export const BLOCK_REASONS = [
@@ -102,6 +103,23 @@ export type InspectResult = InspectSuccess | InspectBlocked | InspectError;
 
 export function isPageId(value: unknown): value is PageId {
   return typeof value === "string" && (PAGE_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * Normalizes a caller-supplied custom page path. Only relative paths on the CRM
+ * app origin are accepted (no scheme/authority, no traversal, no fragments).
+ * Returns the normalized path or undefined when invalid.
+ */
+export function normalizeCustomPath(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const path = value.trim();
+  if (path.length === 0 || path.length > 512) return undefined;
+  if (!path.startsWith("/")) return undefined;
+  if (path.startsWith("//")) return undefined;
+  if (path.includes("\\")) return undefined;
+  if (/[\u0000-\u001f\u007f]/.test(path)) return undefined;
+  if (path.split("/").some((segment) => segment === "..")) return undefined;
+  return path;
 }
 
 export function isBlockReason(value: unknown): value is BlockReason {

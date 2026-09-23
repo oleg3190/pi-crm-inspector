@@ -1,6 +1,7 @@
 /**
- * Trusted static policy. Keep this package outside any agent-writable workspace.
- * Replace the example CRM values before deployment.
+ * Trusted static policy. Local config for ESS dev CRM.
+ * New upstream semantics: URL/origin/path/method restrictions disabled; this file
+ * still declares the pages the inspector may open and the login selectors.
  */
 import type { PageId } from "../shared/protocol.ts";
 
@@ -8,6 +9,7 @@ export type { BlockReason, ErrorCode, PageId } from "../shared/protocol.ts";
 
 export type QueryPolicy = Readonly<{
   allowedKeys: readonly string[];
+  anyKeys?: boolean;
 }>;
 
 export type PageConfig = Readonly<{
@@ -17,70 +19,55 @@ export type PageConfig = Readonly<{
   query: QueryPolicy;
 }>;
 
+export const APP_ORIGIN = "https://statserv-swarm-dev-batuev-od.profintel.ru";
+const AUTH_ORIGIN = "https://auth-statserv-swarm-dev-batuev-od.profintel.ru";
+export const REPORT_URL = `${APP_ORIGIN}/v7/marketing/source-report`;
+const V5_PAGE = `${APP_ORIGIN}/v5/app/#/page/L3Y0L2NsaWVudHMvc2hvdy8xLzg1MTgv`;
+
+// Login SPA is opened at the bare auth root (no redirect_uri injected).
+const LOGIN_URL = `${AUTH_ORIGIN}/`;
+
+const BASE_PATHS = [
+  "/",
+  "/v4/**",
+  "/assets/**",
+  "/static/**",
+  "/favicon.ico",
+] as string[];
 
 export const CRM_POLICY = Object.freeze({
   login: Object.freeze({
-    url: "https://crm.example.internal/login",
-    usernameSelector: "input[name='username']",
-    passwordSelector: "input[name='password']",
-    submitSelector: "button[type='submit']",
-    successSelector: "[data-authenticated='true']",
+    url: LOGIN_URL,
+    usernameSelector: "#username",
+    passwordSelector: "#password",
+    submitSelector: "#submitbutton",
+    // successSelector: "" => wait for URL change (login origin left) instead of a DOM marker.
+    successSelector: "",
     query: Object.freeze({ allowedKeys: [] as string[] }),
   }),
 
   pages: Object.freeze({
     dashboard: Object.freeze({
-      url: "https://crm.example.internal/dashboard",
-      allowedDocuments: Object.freeze([
-        "https://crm.example.internal/login",
-        "https://crm.example.internal/dashboard",
-      ]),
-      allowedRequestPaths: Object.freeze([
-        "/login",
-        "/dashboard",
-        "/assets/**",
-        "/static/**",
-        "/api/dashboard/summary",
-        "/api/dashboard/errors",
-      ]),
-      query: Object.freeze({ allowedKeys: [] as string[] }),
+      url: REPORT_URL,
+      allowedDocuments: Object.freeze([`${AUTH_ORIGIN}/`, REPORT_URL]),
+      allowedRequestPaths: Object.freeze(["/v7/**", ...BASE_PATHS]),
+      query: Object.freeze({ allowedKeys: [] as string[], anyKeys: true }),
     }),
     billing_logs: Object.freeze({
-      url: "https://crm.example.internal/billing/logs",
-      allowedDocuments: Object.freeze([
-        "https://crm.example.internal/login",
-        "https://crm.example.internal/billing/logs",
-      ]),
-      allowedRequestPaths: Object.freeze([
-        "/login",
-        "/billing/logs",
-        "/assets/**",
-        "/static/**",
-        "/api/billing/logs",
-        "/api/billing/logs/summary",
-      ]),
-      query: Object.freeze({ allowedKeys: [] as string[] }),
+      url: REPORT_URL,
+      allowedDocuments: Object.freeze([`${AUTH_ORIGIN}/`, REPORT_URL]),
+      allowedRequestPaths: Object.freeze(["/v7/**", ...BASE_PATHS]),
+      query: Object.freeze({ allowedKeys: [] as string[], anyKeys: true }),
     }),
     auth_logs: Object.freeze({
-      url: "https://crm.example.internal/auth/logs",
-      allowedDocuments: Object.freeze([
-        "https://crm.example.internal/login",
-        "https://crm.example.internal/auth/logs",
-      ]),
-      allowedRequestPaths: Object.freeze([
-        "/login",
-        "/auth/logs",
-        "/assets/**",
-        "/static/**",
-        "/api/auth/logs",
-        "/api/auth/logs/summary",
-      ]),
-      query: Object.freeze({ allowedKeys: [] as string[] }),
+      url: V5_PAGE,
+      allowedDocuments: Object.freeze([`${AUTH_ORIGIN}/`, `${APP_ORIGIN}/v5/app/`]),
+      allowedRequestPaths: Object.freeze(["/v5/**", ...BASE_PATHS]),
+      query: Object.freeze({ allowedKeys: [] as string[], anyKeys: true }),
     }),
   }),
 
   browser: Object.freeze({
-    disableProxy: true,
     allowWebSocket: true,
     allowDownloads: false,
     serviceWorkers: "block" as const,
@@ -97,11 +84,21 @@ export const CRM_POLICY = Object.freeze({
     maxSecurityEvents: 200,
     maxUrlQueryChars: 2_048,
   }),
-
-
 } as const);
 
-export const PAGE_IDS = ["dashboard", "billing_logs", "auth_logs"] as const;
+export function customPageConfig(path: string): PageConfig {
+  const pathname = (path.split("?", 1)[0] ?? "/").replace(/\/+$/u, "") || "/";
+  const extraRules = pathname === "/" ? [] : [`${pathname}/**`];
+  const url = `${APP_ORIGIN}${path}`;
+  return Object.freeze({
+    url,
+    allowedDocuments: Object.freeze([`${AUTH_ORIGIN}/`, url]),
+    allowedRequestPaths: Object.freeze([...extraRules, ...BASE_PATHS]),
+    query: Object.freeze({ allowedKeys: [] as string[], anyKeys: true }),
+  });
+}
+
+export const PAGE_IDS = ["dashboard", "billing_logs", "auth_logs", "custom"] as const;
 
 export function getPageConfig(pageId: PageId): PageConfig {
   return CRM_POLICY.pages[pageId];

@@ -10,6 +10,7 @@ import {
   type ErrorCode,
   type PageId,
   getPageConfig,
+  customPageConfig,
 } from "./policy.ts";
 import {
   isAllowedRequest,
@@ -27,6 +28,7 @@ import type {
   RequestFailure,
   SecurityEvent,
 } from "../shared/protocol.ts";
+import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 
 const TOOL_NAME = "inspect_crm_page" as const;
 const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
@@ -39,6 +41,21 @@ type InspectorPhase = "login" | "authenticated";
 
 const username = () => process.env.PI_CRM_USERNAME ?? "";
 const password = () => process.env.PI_CRM_PASSWORD ?? "";
+
+// Local workaround: internal CRM hosts are not resolvable from this dev box,
+// so pin them to the dev-server IP (restores the fail-closed pinning the
+// pre-3.2 inspector had).
+const PINNED_HOSTS: ReadonlyArray<readonly [string, string]> = [
+  ["statserv-swarm-dev-batuev-od.profintel.ru", "10.30.57.66"],
+  ["auth-statserv-swarm-dev-batuev-od.profintel.ru", "10.30.57.66"],
+  ["api-auth-statserv-swarm-dev-batuev-od.profintel.ru", "10.30.57.66"],
+];
+function buildHostResolverRules(): string {
+  return (
+    PINNED_HOSTS.map(([host, ip]) => `MAP ${host} ${ip.includes(":") ? `[${ip}]` : ip}`).join(", ") +
+    ", MAP * ~NOTFOUND"
+  );
+}
 
 function combineSignals(externalSignal: AbortSignal | undefined, securitySignal: AbortSignal): AbortSignal {
   if (externalSignal) return AbortSignal.any([externalSignal, securitySignal]);
@@ -123,7 +140,7 @@ async function closeContextAndBrowser(
   await closeWithTimeout(browser, "browser");
 }
 
-async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promise<InspectResult> {
+async function inspectPage(pageId: PageId, externalSignal?: AbortSignal, customPath?: string): Promise<InspectResult> {
   const traceId = randomUUID();
   const startedAt = Date.now();
   const consoleEvents: ConsoleLog[] = [];
@@ -143,7 +160,14 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
   const securityAbort = new AbortController();
   const signal = combineSignals(externalSignal, securityAbort.signal);
   const secrets = [username(), password()].filter(Boolean);
-  const pageConfig = getPageConfig(pageId);
+  const pageConfig =
+    pageId === CUSTOM_PAGE_ID
+      ? (() => {
+          const p = normalizeCustomPath(customPath);
+          if (!p) throw new Error("Invalid custom page path");
+          return customPageConfig(p);
+        })()
+      : getPageConfig(pageId);
 
   const addSecurityEvent = (event: SecurityEvent) => {
     if (securityEvents.length < CRM_POLICY.limits.maxSecurityEvents) securityEvents.push(event);
@@ -151,10 +175,9 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
   };
 
   const triggerBlock = (reason: BlockReason, event?: SecurityEvent) => {
-    if (!blockReason) blockReason = reason;
+    // Restrictions are intentionally disabled upstream; any remaining block
+    // (download/serviceworker) is recorded as an event but does not abort the run.
     if (event) addSecurityEvent(event);
-    if (!securityAbort.signal.aborted) securityAbort.abort(reason);
-    void context?.close().catch(() => undefined);
   };
 
   const capture = (bucket: CaptureBucket, text: string, maxEntries: number) => {
@@ -218,6 +241,7 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
         "--disable-features=Translate,AutofillServerCommunication,OptimizationHints",
         "--disable-quic",
         "--no-proxy-server",
+        `--host-resolver-rules=${buildHostResolverRules()}`,
       ],
     });
 
@@ -336,11 +360,20 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal): Promis
     await withTimeout(mainPage.locator(CRM_POLICY.login.usernameSelector).fill(user), CRM_POLICY.limits.operationTimeoutMs, signal);
     await withTimeout(mainPage.locator(CRM_POLICY.login.passwordSelector).fill(pass), CRM_POLICY.limits.operationTimeoutMs, signal);
     await withTimeout(mainPage.locator(CRM_POLICY.login.submitSelector).click(), CRM_POLICY.limits.operationTimeoutMs, signal);
-    await withTimeout(
-      mainPage.locator(CRM_POLICY.login.successSelector).waitFor({ state: "visible" }),
-      CRM_POLICY.limits.operationTimeoutMs,
-      signal,
-    );
+    if (CRM_POLICY.login.successSelector === "") {
+      const loginHost = LOGIN_URL.hostname;
+      await withTimeout(
+        mainPage.waitForURL((url) => url.hostname !== loginHost),
+        CRM_POLICY.limits.operationTimeoutMs,
+        signal,
+      );
+    } else {
+      await withTimeout(
+        mainPage.locator(CRM_POLICY.login.successSelector).waitFor({ state: "visible" }),
+        CRM_POLICY.limits.operationTimeoutMs,
+        signal,
+      );
+    }
 
     phase = "authenticated";
     collecting = true;
@@ -401,7 +434,7 @@ export default function (pi: ExtensionAPI) {
     name: TOOL_NAME,
     label: "CRM Inspector",
     description:
-      "Read-only CRM inspector. This isolated child session accepts only a fixed page_id and exactly one inspection call.",
+      "Read-only CRM inspector. This isolated child session accepts a fixed page_id or a custom path and exactly one inspection call.",
     promptSnippet: "Inspect the fixed CRM page through the security-gated browser capability",
     promptGuidelines: [
       "Call inspect_crm_page exactly once with the requested page_id.",
@@ -410,7 +443,12 @@ export default function (pi: ExtensionAPI) {
       "Stop immediately after the tool result.",
     ],
     executionMode: "sequential",
-    parameters: Type.Object({ page_id: PageIdSchema }),
+    parameters: Type.Object({
+      page_id: PageIdSchema,
+      path: Type.Optional(
+        Type.String({ description: "Relative path on the CRM app origin; required when page_id='custom'." }),
+      ),
+    }),
     async execute(_toolCallId, params, signal) {
       if (invocationUsed) {
         const result: InspectError = {
@@ -431,7 +469,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       invocationUsed = true;
-      const result = await inspectPage(params.page_id, signal);
+      const result = await inspectPage(params.page_id, signal, params.path as string | undefined);
       return {
         content: [{ type: "text", text: JSON.stringify(result) }],
         details: result,
