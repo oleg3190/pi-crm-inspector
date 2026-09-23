@@ -27,6 +27,7 @@ import type {
   PageError,
   RequestFailure,
   SecurityEvent,
+  InspectInteractionResult,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 
@@ -356,7 +357,7 @@ async function captureDomSnapshot(page: Page): Promise<string> {
 
 async function waitForDomStability(page: Page, signal: AbortSignal): Promise<void> {
   await withTimeout(
-    page.locator("body").evaluate(({ quietMs, maxMs }) => new Promise<void>((resolve) => {
+    page.locator("body").evaluate((_root, { quietMs, maxMs }) => new Promise<void>((resolve) => {
       const root = document.body;
       if (!root) {
         resolve();
