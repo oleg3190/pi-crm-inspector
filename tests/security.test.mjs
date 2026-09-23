@@ -93,6 +93,8 @@ test("protocol guard accepts only valid results", () => {
     pageId: "dashboard",
     durationMs: 1,
     pageText: "ipsum Dashboard",
+    domSnapshot: "<body><main>ipsum Dashboard</main></body>",
+    interactions: [],
     console: [],
     pageErrors: [],
     requestFailures: [],
@@ -102,6 +104,10 @@ test("protocol guard accepts only valid results", () => {
   assert.equal(isInspectResult({ status: "success", ...base }), true);
   assert.equal(isInspectResult({ status: "blocked", ...base, reason: "external_redirect" }), true);
   assert.equal(isInspectResult({ status: "error", traceId: "trace", pageId: "dashboard", durationMs: 1, code: "timeout", message: "x", securityEvents: [] }), true);
+  assert.equal(
+    isInspectResult({ status: "success", ...base, interactions: Array.from({ length: 9 }, (_, index) => ({ type: "click", selector: String(index), ok: true, matched: 1 })) }),
+    false,
+  );
   assert.throws(() => asInspectResult({ status: "success" }));
 });
 
