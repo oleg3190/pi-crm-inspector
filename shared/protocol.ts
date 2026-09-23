@@ -220,7 +220,7 @@ export type InspectSuccess = {
   droppedEvents: number;
 };
 
-export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "elements" | "screenshot" | "screenshotSuppressed"> & {
+export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "assertions" | "assertionsPassed" | "elements" | "screenshot" | "screenshotSuppressed"> & {
   status: "blocked";
   reason: BlockReason;
   pageText?: string;
