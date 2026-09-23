@@ -95,6 +95,8 @@ test("protocol guard accepts only valid results", () => {
     pageText: "ipsum Dashboard",
     domSnapshot: "<body><main>ipsum Dashboard</main></body>",
     interactions: [],
+    assertions: [],
+    assertionsPassed: true,
     elements: [],
     console: [],
     pageErrors: [],
