@@ -83,6 +83,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
 }
 
 const DEFAULT_TEXT_REPLACEMENT = "ipsum";
+const MAX_PAGE_TEXT_CHARS = 65_536;
 const DATE_PATTERN = /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
 type TextRange = readonly [number, number];
@@ -542,11 +543,18 @@ async function inspectPage(pageId: PageId, externalSignal?: AbortSignal, customP
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
     if (derivedBlock) return blockedResult(derivedBlock);
 
+    const rawPageText = await mainPage.locator("body").innerText();
+    const scrubbedPageText = scrubSecrets(rawPageText, secrets);
+    const pageText = scrubbedPageText.length <= MAX_PAGE_TEXT_CHARS
+      ? scrubbedPageText
+      : `${scrubbedPageText.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
+
     return {
       status: "success",
       traceId,
       pageId,
       durationMs: Date.now() - startedAt,
+      pageText,
       console: consoleEvents,
       pageErrors,
       requestFailures,
