@@ -254,7 +254,7 @@ type InspectExecution = {
   screenshotData?: string;
 };
 
-async function captureAccessibilityElements(page: Page): Promise<InspectElement[]> {
+export async function captureAccessibilityElements(page: Page): Promise<InspectElement[]> {
   return page.locator("body").evaluate((root, options) => {
     const maskText = (value: string): string => {
       const protectedParts: string[] = [];
@@ -339,7 +339,7 @@ async function captureAccessibilityElements(page: Page): Promise<InspectElement[
     });
   }, { maxElements: MAX_A11Y_ELEMENTS });
 }
-async function captureDomSnapshot(page: Page): Promise<string> {
+export async function captureDomSnapshot(page: Page): Promise<string> {
   const snapshot = await page.locator("body").evaluate((root, options) => {
     const lines: string[] = [];
     let count = 0;
@@ -467,7 +467,7 @@ async function captureDomSnapshot(page: Page): Promise<string> {
   return `${snapshot.slice(0, MAX_DOM_SNAPSHOT_CHARS - 12)}\\n<!-- truncated -->`;
 }
 
-async function waitForDomStability(page: Page, signal: AbortSignal): Promise<void> {
+export async function waitForDomStability(page: Page, signal: AbortSignal): Promise<void> {
   await withTimeout(
     page.locator("body").evaluate((_root, { quietMs, maxMs }) => new Promise<void>((resolve) => {
       const root = document.body;
@@ -517,7 +517,7 @@ async function waitForDomStability(page: Page, signal: AbortSignal): Promise<voi
   );
 }
 
-async function runInspectActions(
+export async function runInspectActions(
   page: Page,
   actions: readonly InspectAction[],
   signal: AbortSignal,
@@ -589,7 +589,7 @@ async function runInspectActions(
   return results;
 }
 
-async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
+export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
   const image = await page.screenshot({ type: "png", scale: "css", animations: "disabled" });
   if (image.length > MAX_SCREENSHOT_BYTES) {
     throw new Error("Requested screenshot exceeded the 1.5 MB safety limit");
