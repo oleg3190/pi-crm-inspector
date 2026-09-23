@@ -13,7 +13,7 @@ const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
 const CHILD_PARENT_TRACE_ENV = "PI_CRM_INSPECTOR_PARENT_TRACE";
 const CHILD_TIMEOUT_MS = 60_000;
 const CHILD_KILL_GRACE_MS = 3_000;
-const MAX_CHILD_STDOUT = 512 * 1024;
+const MAX_CHILD_STDOUT = 2 * 1024 * 1024;
 const MAX_CHILD_STDERR = 32 * 1024;
 const MAX_INSPECT_ACTIONS = 8;
 const PageIdSchema = StringEnum(PAGE_IDS, { description: "Fixed CRM page identifier." });
@@ -22,7 +22,7 @@ const CHILD_PROMPT = `You are the CRM Inspector child agent.
 
 Your only available tool is inspect_crm_page.
 
-Call inspect_crm_page exactly once, using the exact page_id, path, and actions (when present) from the user task.
+Call inspect_crm_page exactly once, using the exact page_id, path, actions, and screenshot request (when present) from the user task.
 Use each provided action exactly as given; do not invent additional actions.
 The tool result includes visible text, a compact DOM snapshot, rendered media metadata, and interaction results.
 The tool result is authoritative machine-readable data.
@@ -165,7 +165,8 @@ async function runChild(
   pageId: PageId,
   signal?: AbortSignal,
   customPath?: string,
-  actions: readonly { type: "click"; selector: string }[] = [],
+  actions: readonly { type: "click"; selector: string; waitFor?: unknown }[] = [],
+  screenshotRequested = false,
 ): Promise<ChildExecution> {
   const invocationTraceId = randomUUID();
   const childCwd = await mkdtemp(`${tmpdir()}${process.platform === "win32" ? "\\" : "/"}pi-crm-child-`);
@@ -192,7 +193,7 @@ async function runChild(
     "--model", model,
     "-e", extensionPath,
     "--append-system-prompt", CHILD_PROMPT,
-    `Inspect CRM page_id=${pageId}${customPath === undefined ? "" : ` path=${JSON.stringify(customPath)}`}${actions.length === 0 ? "" : ` actions=${JSON.stringify(actions)}`}. Call inspect_crm_page exactly once.`,
+    `Inspect CRM page_id=${pageId}${customPath === undefined ? "" : ` path=${JSON.stringify(customPath)}`}${actions.length === 0 ? "" : ` actions=${JSON.stringify(actions)}`}${screenshotRequested ? " screenshot=true" : ""}. Call inspect_crm_page exactly once.`,
   ];
 
   try {
@@ -292,6 +293,45 @@ async function runChild(
   }
 }
 
+export type ChildToolImage = {
+  type: "image";
+  data: string;
+  mimeType: "image/png";
+};
+
+function extractFirstInspectorEvent(stdout: string, overflow: boolean): Record<string, unknown> {
+  if (overflow) throw new Error("Child stdout exceeded the protocol safety limit");
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event: unknown;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!event || typeof event !== "object") continue;
+    const row = event as Record<string, unknown>;
+    if (row.type !== "tool_execution_end" || row.toolName !== "inspect_crm_page") continue;
+    const result = row.result;
+    if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("Child tool event has no result object");
+    const resultRecord = result as Record<string, unknown>;
+    if (!resultRecord.details || typeof resultRecord.details !== "object" || resultRecord.details === null || Array.isArray(resultRecord.details)) throw new Error("Child result details must be an object");
+    return resultRecord;
+  }
+  throw new Error("Expected exactly one inspect_crm_page execution, got 0");
+}
+
+export function extractChildToolImages(stdout: string, overflow: boolean): ChildToolImage[] {
+  const resultRecord = extractFirstInspectorEvent(stdout, overflow);
+  const content = resultRecord.content;
+  if (!Array.isArray(content)) return [];
+  return content
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .filter((item) => item.type === "image")
+    .map((item) => {
+      if (typeof item.data !== "string" || item.data.length > 2_000_000 || item.mimeType !== "image/png") {
+        throw new Error("Child screenshot content is invalid or exceeds the safety limit");
+      }
+      return { type: "image", data: item.data, mimeType: "image/png" as const };
+    });
+}
+
 export function extractChildToolResult(stdout: string, expectedPageId: PageId, overflow: boolean): InspectResult {
   if (overflow) throw new Error("Child stdout exceeded the protocol safety limit");
 
@@ -337,6 +377,9 @@ export default function (pi: ExtensionAPI) {
       path: Type.Optional(
         Type.String({ description: "Relative path on the CRM app origin; required when page_id='custom'." }),
       ),
+      screenshot: Type.Optional(
+        Type.Boolean({ description: "Capture a viewport screenshot after actions and DOM stabilization." }),
+      ),
       actions: Type.Optional(
         Type.Array(
           Type.Object({
@@ -361,7 +404,8 @@ export default function (pi: ExtensionAPI) {
         params.page_id,
         signal,
         customPath,
-        (params.actions as Array<{ type: "click"; selector: string }> | undefined) ?? [],
+        (params.actions as Array<{ type: "click"; selector: string; waitFor?: unknown }> | undefined) ?? [],
+        params.screenshot === true,
       );
       if (execution.timedOut) throw new Error(`CRM inspector child timed out after ${CHILD_TIMEOUT_MS} ms (trace=${execution.invocationTraceId})`);
       if (execution.aborted) throw new Error(`CRM inspector child aborted (trace=${execution.invocationTraceId})`);
@@ -373,8 +417,9 @@ export default function (pi: ExtensionAPI) {
 
       try {
         const result = extractChildToolResult(execution.stdout, params.page_id, execution.stdoutOverflow);
+        const images = extractChildToolImages(execution.stdout, execution.stdoutOverflow);
         return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }, ...images],
           details: { invocationTraceId: execution.invocationTraceId, result },
         };
       } catch (error) {
