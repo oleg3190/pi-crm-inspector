@@ -85,9 +85,10 @@ export type InspectSuccess = {
   droppedEvents: number;
 };
 
-export type InspectBlocked = Omit<InspectSuccess, "status"> & {
+export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText"> & {
   status: "blocked";
   reason: BlockReason;
+  pageText?: string;
 };
 
 export type InspectError = {
@@ -198,10 +199,11 @@ function isRequestFailure(value: unknown): value is RequestFailure {
   );
 }
 
-function isCommonResultFields(value: Record<string, unknown>): boolean {
+function isCommonResultFields(value: Record<string, unknown>, requirePageText: boolean): boolean {
   if (!isPageId(value.pageId)) return false;
   if (!isFiniteNonNegativeInteger(value.durationMs)) return false;
-  if (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH) return false;
+  if (requirePageText && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
+  if (!requirePageText && value.pageText !== undefined && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
   if (!Array.isArray(value.console) || !value.console.every(isConsoleLog)) return false;
   if (!Array.isArray(value.pageErrors) || !value.pageErrors.every(isPageError)) return false;
   if (!Array.isArray(value.requestFailures) || !value.requestFailures.every(isRequestFailure)) return false;
@@ -215,8 +217,8 @@ export function isInspectResult(value: unknown): value is InspectResult {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
 
-  if (result.status === "success") return isCommonResultFields(result);
-  if (result.status === "blocked") return isCommonResultFields(result) && isBlockReason(result.reason);
+  if (result.status === "success") return isCommonResultFields(result, true);
+  if (result.status === "blocked") return isCommonResultFields(result, false) && isBlockReason(result.reason);
 
   if (result.status === "error") {
     if (typeof result.traceId !== "string" || !isBoundedString(result.traceId, MAX_TRACE_ID_LENGTH)) return false;
