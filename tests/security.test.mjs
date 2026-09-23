@@ -145,8 +145,8 @@ test("CHILD_GUARD_ENV — inspector throws if env not set", async () => {
 test("second invocationUsed → second call returns error with terminate:true", async () => {
   process.env.PI_CRM_INSPECTOR_CHILD = "1";
   const mockPi = {
-    registerTool: (name, opts) => {
-      if (name === "inspect_crm_page") {
+    registerTool: (opts) => {
+      if (opts.name === "inspect_crm_page") {
         mockPi.execute = opts.execute;
       }
     }
