@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -31,6 +31,8 @@ import type {
   InspectElement,
   InspectScreenshot,
   InspectWaitFor,
+  type InspectAction,
+  type InspectTarget,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 
@@ -91,7 +93,21 @@ const MAX_PAGE_TEXT_CHARS = 65_536;
 const MAX_DOM_SNAPSHOT_CHARS = 65_536;
 const MAX_DOM_NODES = 2_000;
 const MAX_DOM_DEPTH = 12;
-const MAX_CLICK_ACTIONS = 8;
+const MAX_INSPECT_ACTIONS = 8;
+const ALLOWED_PRESS_KEYS = new Set([
+  "Enter",
+  "Escape",
+  "Tab",
+  "ArrowDown",
+  "ArrowUp",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "Space",
+  "Backspace",
+  "Delete",
+]);
 const DOM_STABILITY_QUIET_MS = 350;
 const DOM_STABILITY_MAX_MS = 3_000;
 const MAX_A11Y_ELEMENTS = 100;
@@ -243,13 +259,8 @@ async function installTextReplacement(page: Page, replacement: string = DEFAULT_
   await page.addInitScript({ content: buildTextReplacementScript(replacement) });
 }
 
-type InspectAction = {
-  type: "click";
-  selector: string;
-  waitFor?: InspectWaitFor;
-};
-
 type InspectExecution = {
+
   result: InspectResult;
   screenshotData?: string;
 };
@@ -519,70 +530,218 @@ export async function waitForDomStability(page: Page, signal: AbortSignal): Prom
   );
 }
 
+export function resolveInspectTarget(page: Page, target: InspectTarget): Locator {
+  switch (target.by) {
+    case "css":
+      return page.locator(target.value);
+    case "id":
+      return page.locator(`id=${target.value}`);
+    case "role":
+      return target.name === undefined
+        ? page.getByRole(target.role as Parameters<Page["getByRole"]>[0])
+        : page.getByRole(target.role as Parameters<Page["getByRole"]>[0], { name: target.name, exact: true });
+    case "label":
+      return page.getByLabel(target.value, { exact: true });
+    case "placeholder":
+      return page.getByPlaceholder(target.value, { exact: true });
+    case "text":
+      return page.getByText(target.value, { exact: true });
+    case "testId":
+      return page.getByTestId(target.value);
+  }
+}
+
+function actionTarget(action: InspectAction): { target: InspectTarget; selector?: string } {
+  if (action.type === "click") {
+    if (action.target) return { target: action.target };
+    if (action.selector) return { target: { by: "css", value: action.selector }, selector: action.selector };
+  }
+  throw new Error(`Action ${action.type} requires a structured target`);
+}
+
+async function waitForActionCompletion(
+  page: Page,
+  waitFor: InspectWaitFor | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  await waitForDomStability(page, signal);
+  if (!waitFor) return;
+  const timeoutMs = waitFor.timeoutMs ?? CRM_POLICY.limits.operationTimeoutMs;
+  await withTimeout(
+    page.locator(waitFor.selector).waitFor({
+      state: waitFor.state,
+      timeout: timeoutMs,
+    }),
+    timeoutMs,
+    signal,
+  );
+}
+
+async function fillValueLength(locator: Locator): Promise<number> {
+  try {
+    return (await locator.inputValue()).length;
+  } catch {
+    return (await locator.textContent() ?? "").length;
+  }
+}
+
+async function selectNativeOption(
+  locator: Locator,
+  option: { value?: string; label?: string },
+): Promise<boolean> {
+  const before = await locator.evaluate((element) => {
+    if (!(element instanceof HTMLSelectElement)) return "";
+    return Array.from(element.selectedOptions, (item) => item.value).join("\u0000");
+  });
+  await locator.selectOption({
+    ...(option.value !== undefined ? { value: option.value } : {}),
+    ...(option.label !== undefined ? { label: option.label } : {}),
+  });
+  const after = await locator.evaluate((element) => {
+    if (!(element instanceof HTMLSelectElement)) return "";
+    return Array.from(element.selectedOptions, (item) => item.value).join("\u0000");
+  });
+  return before !== after;
+}
+
+async function selectCustomCombobox(
+  page: Page,
+  locator: Locator,
+  option: { value?: string; label?: string },
+  signal: AbortSignal,
+): Promise<boolean> {
+  const before = await locator.getAttribute("aria-activedescendant");
+  await locator.click();
+  await waitForDomStability(page, signal);
+
+  const requestedName = option.label ?? option.value;
+  if (!requestedName) throw new Error("Select option must provide value or label");
+
+  let optionLocator = page.getByRole("option", { name: requestedName, exact: true });
+  let matched = await optionLocator.count();
+  if (matched === 0) {
+    optionLocator = page.locator('[role="option"]').filter({ hasText: requestedName });
+    matched = await optionLocator.count();
+  }
+  if (matched !== 1) {
+    throw new Error(matched === 0 ? "Combobox option matched no elements" : "Combobox option matched multiple elements");
+  }
+
+  const wasSelected = await optionLocator.getAttribute("aria-selected");
+  await optionLocator.click();
+  const after = await locator.getAttribute("aria-activedescendant");
+  const selected = await optionLocator.getAttribute("aria-selected");
+  return before !== after || wasSelected !== selected;
+}
+
+export function hasSensitiveInspectAction(actions: readonly InspectAction[]): boolean {
+  return actions.some((action) => action.type === "fill" && action.sensitive === true);
+}
+
 export async function runInspectActions(
   page: Page,
   actions: readonly InspectAction[],
   signal: AbortSignal,
 ): Promise<InspectInteractionResult[]> {
-  if (actions.length > MAX_CLICK_ACTIONS) {
-    throw new Error(`Too many inspect actions; maximum is ${MAX_CLICK_ACTIONS}`);
+  if (actions.length > MAX_INSPECT_ACTIONS) {
+    throw new Error(`Too many inspect actions; maximum is ${MAX_INSPECT_ACTIONS}`);
   }
 
   const results: InspectInteractionResult[] = [];
 
   for (const action of actions) {
-    if (action.type !== "click") {
-      throw new Error("Unsupported inspect action");
-    }
-    const selector = action.selector.trim();
-    if (!selector || selector.length > 512) {
-      results.push({ type: "click", selector, ok: false, matched: 0, error: "Invalid selector" });
-      continue;
-    }
-
+    let target: InspectTarget | undefined;
+    let selector: string | undefined;
     try {
-      const locator = page.locator(selector);
+      ({ target, selector } = actionTarget(action));
+      const locator = resolveInspectTarget(page, target);
       const matched = await locator.count();
+
       if (matched === 0) {
         results.push({
-          type: "click",
-          selector,
+          type: action.type,
+          target,
+          ...(selector ? { selector } : {}),
           ok: false,
           matched,
           url: page.url(),
-          error: "Selector matched no elements",
+          error: "Target matched no elements",
         });
         continue;
       }
 
-      await withTimeout(locator.first().click({ timeout: CRM_POLICY.limits.operationTimeoutMs }), CRM_POLICY.limits.operationTimeoutMs, signal);
-      await waitForDomStability(page, signal);
-      if (action.waitFor) {
-        await withTimeout(
-          page.locator(action.waitFor.selector).waitFor({
-            state: action.waitFor.state,
-            timeout: action.waitFor.timeoutMs ?? CRM_POLICY.limits.operationTimeoutMs,
-          }),
-          action.waitFor.timeoutMs ?? CRM_POLICY.limits.operationTimeoutMs,
-          signal,
-        );
+      if (matched !== 1) {
+        results.push({
+          type: action.type,
+          target,
+          ...(selector ? { selector } : {}),
+          ok: false,
+          matched,
+          url: page.url(),
+          error: "Target matched multiple elements",
+        });
+        continue;
       }
 
+      const beforeChecked = action.type === "check" ? await locator.isChecked().catch(() => undefined) : undefined;
+      let changed: boolean | undefined;
+      let valueLength: number | undefined;
+
+      switch (action.type) {
+        case "click":
+          await withTimeout(locator.click({ timeout: CRM_POLICY.limits.operationTimeoutMs }), CRM_POLICY.limits.operationTimeoutMs, signal);
+          break;
+        case "fill":
+          await withTimeout(locator.fill(action.value, { timeout: CRM_POLICY.limits.operationTimeoutMs }), CRM_POLICY.limits.operationTimeoutMs, signal);
+          valueLength = await fillValueLength(locator);
+          changed = true;
+          break;
+        case "select": {
+          const tagName = await locator.evaluate((element) => element.tagName);
+          if (tagName === "SELECT") {
+            changed = await selectNativeOption(locator, action.option);
+          } else if ((await locator.getAttribute("role")) === "combobox" || action.target.by === "role" && action.target.role === "combobox") {
+            changed = await selectCustomCombobox(page, locator, action.option, signal);
+          } else {
+            throw new Error("Select target must be a native <select> or role=combobox");
+          }
+          break;
+        }
+        case "check":
+          if (action.checked) await locator.check({ timeout: CRM_POLICY.limits.operationTimeoutMs });
+          else await locator.uncheck({ timeout: CRM_POLICY.limits.operationTimeoutMs });
+          changed = beforeChecked !== action.checked;
+          break;
+        case "press":
+          if (!ALLOWED_PRESS_KEYS.has(action.key)) throw new Error("Unsupported press key");
+          await locator.press(action.key, { timeout: CRM_POLICY.limits.operationTimeoutMs });
+          break;
+      }
+
+      await waitForActionCompletion(page, action.waitFor, signal);
+
       results.push({
-        type: "click",
-        selector,
+        type: action.type,
+        target,
+        ...(selector ? { selector } : {}),
         ok: true,
         matched,
         url: page.url(),
+        ...(changed !== undefined ? { changed } : {}),
+        ...(valueLength !== undefined ? { valueLength } : {}),
+        ...(action.type === "check" ? { checked: action.checked } : {}),
+        ...(action.type === "press" ? { key: action.key } : {}),
         ...(action.waitFor ? { waitFor: action.waitFor } : {}),
       });
     } catch (error) {
       results.push({
-        type: "click",
-        selector,
+        type: action.type,
+        ...(target ? { target } : {}),
+        ...(selector ? { selector } : {}),
         ok: false,
         matched: 0,
         url: page.url(),
+        ...(action.type === "press" ? { key: action.key } : {}),
         error: scrubSecrets(error instanceof Error ? error.message : String(error), []),
       });
     }
@@ -929,7 +1088,10 @@ async function inspectPage(
       ? scrubbedPageText
       : `${scrubbedPageText.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
     const domSnapshot = await captureDomSnapshot(mainPage);
-    const screenshotCapture = screenshotRequested ? await captureViewportScreenshot(mainPage) : undefined;
+    const screenshotSuppressed = screenshotRequested && hasSensitiveInspectAction(actions);
+    const screenshotCapture = screenshotRequested && !screenshotSuppressed
+      ? await captureViewportScreenshot(mainPage)
+      : undefined;
 
     const result: InspectSuccess = {
       status: "success",
@@ -941,6 +1103,7 @@ async function inspectPage(
       interactions,
       elements,
       ...(screenshotCapture ? { screenshot: { mimeType: "image/png" as const, width: screenshotCapture.width, height: screenshotCapture.height } } : {}),
+      ...(screenshotSuppressed ? { screenshotSuppressed: "sensitive_action" as const } : {}),
       console: consoleEvents,
       pageErrors,
       requestFailures,
