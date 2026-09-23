@@ -32,6 +32,8 @@ import type {
   InspectScreenshot,
   InspectWaitFor,
   InspectAction,
+  InspectAssertion,
+  InspectAssertionResult,
   InspectTarget,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
@@ -94,6 +96,7 @@ const MAX_DOM_SNAPSHOT_CHARS = 65_536;
 const MAX_DOM_NODES = 2_000;
 const MAX_DOM_DEPTH = 12;
 const MAX_INSPECT_ACTIONS = 8;
+const MAX_INSPECT_ASSERTIONS = 8;
 const ALLOWED_PRESS_KEYS = new Set([
   "Enter",
   "Escape",
@@ -756,6 +759,120 @@ export async function runInspectActions(
   return results;
 }
 
+export async function runInspectAssertions(
+  page: Page,
+  assertions: readonly InspectAssertion[],
+  signal: AbortSignal,
+): Promise<InspectAssertionResult[]> {
+  if (assertions.length > MAX_INSPECT_ASSERTIONS) {
+    throw new Error(`Too many inspect assertions; maximum is ${MAX_INSPECT_ASSERTIONS}`);
+  }
+
+  const results: InspectAssertionResult[] = [];
+
+  for (const assertion of assertions) {
+    try {
+      if (assertion.type === "expectUrl") {
+        const actualUrl = page.url();
+        const mode = assertion.mode ?? "exact";
+        const ok = mode === "exact"
+          ? actualUrl === assertion.value
+          : mode === "contains"
+            ? actualUrl.includes(assertion.value)
+            : actualUrl.startsWith(assertion.value);
+        results.push({ type: assertion.type, ok, error: ok ? undefined : "URL assertion failed" });
+        continue;
+      }
+
+      const locator = resolveInspectTarget(page, assertion.target);
+      const matched = await locator.count();
+
+      if (assertion.type === "expectCount") {
+        const ok = matched === assertion.count;
+        results.push({
+          type: assertion.type,
+          target: assertion.target,
+          ok,
+          actualCount: matched,
+          error: ok ? undefined : `Expected ${assertion.count} matching elements, got ${matched}`,
+        });
+        continue;
+      }
+
+      if (matched !== 1) {
+        results.push({
+          type: assertion.type,
+          target: assertion.target,
+          ok: false,
+          matched,
+          error: matched === 0 ? "Assertion target matched no elements" : "Assertion target matched multiple elements",
+        });
+        continue;
+      }
+
+      switch (assertion.type) {
+        case "expectText": {
+          const actual = await locator.innerText().catch(async () => (await locator.textContent()) ?? "");
+          const ok = assertion.exact === true ? actual === assertion.text : actual.includes(assertion.text);
+          results.push({ type: assertion.type, target: assertion.target, ok, matched, error: ok ? undefined : "Text assertion failed" });
+          break;
+        }
+        case "expectVisible": {
+          const ok = await locator.isVisible();
+          results.push({ type: assertion.type, target: assertion.target, ok, matched, error: ok ? undefined : "Element is not visible" });
+          break;
+        }
+        case "expectAttribute": {
+          const actual = await locator.getAttribute(assertion.name);
+          const present = actual !== null;
+          const ok = (assertion.present === undefined || present === assertion.present)
+            && (assertion.value === undefined || actual === assertion.value);
+          results.push({
+            type: assertion.type,
+            target: assertion.target,
+            ok,
+            matched,
+            attributePresent: present,
+            error: ok ? undefined : "Attribute assertion failed",
+          });
+          break;
+        }
+        case "expectElementState": {
+          let ok: boolean;
+          switch (assertion.state) {
+            case "visible": ok = await locator.isVisible(); break;
+            case "hidden": ok = !(await locator.isVisible()); break;
+            case "enabled": ok = await locator.isEnabled(); break;
+            case "disabled": ok = !(await locator.isEnabled()); break;
+            case "checked": ok = await locator.isChecked(); break;
+            case "unchecked": ok = !(await locator.isChecked()); break;
+            case "expanded": ok = (await locator.getAttribute("aria-expanded")) === "true"; break;
+            case "collapsed": ok = (await locator.getAttribute("aria-expanded")) === "false"; break;
+          }
+          results.push({
+            type: assertion.type,
+            target: assertion.target,
+            ok,
+            matched,
+            state: assertion.state,
+            error: ok ? undefined : `Element state assertion failed: ${assertion.state}`,
+          });
+          break;
+        }
+      }
+    } catch (error) {
+      results.push({
+        type: assertion.type,
+        ...("target" in assertion ? { target: assertion.target } : {}),
+        ok: false,
+        error: scrubSecrets(error instanceof Error ? error.message : String(error), []),
+      });
+    }
+  }
+
+  return results;
+}
+
 export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
   const image = await page.screenshot({ type: "png", scale: "css", animations: "disabled" });
   if (image.length > MAX_SCREENSHOT_BYTES) {
@@ -830,6 +947,7 @@ async function inspectPage(
   externalSignal?: AbortSignal,
   customPath?: string,
   actions: readonly InspectAction[] = [],
+  assertions: readonly InspectAssertion[] = [],
   screenshotRequested = false,
 ): Promise<InspectExecution> {
   const traceId = randomUUID();
@@ -1087,6 +1205,8 @@ async function inspectPage(
     if (derivedBlock) return { result: blockedResult(derivedBlock) };
 
     const interactions = await runInspectActions(mainPage, actions, signal);
+    const assertionResults = await runInspectAssertions(mainPage, assertions, signal);
+    const assertionsPassed = assertionResults.every((assertion) => assertion.ok);
     const elements = await captureAccessibilityElements(mainPage);
     const rawPageText = await mainPage.locator("body").innerText();
     const scrubbedPageText = scrubSecrets(rawPageText, secrets);
@@ -1107,6 +1227,8 @@ async function inspectPage(
       pageText,
       domSnapshot,
       interactions,
+      assertions: assertionResults,
+      assertionsPassed,
       elements,
       ...(screenshotCapture ? { screenshot: { mimeType: "image/png" as const, width: screenshotCapture.width, height: screenshotCapture.height } } : {}),
       ...(screenshotSuppressed ? { screenshotSuppressed: "sensitive_action" as const } : {}),
@@ -1139,6 +1261,58 @@ async function inspectPage(
   }
 }
 
+const InspectAssertionSchema = Type.Union([
+  Type.Object({
+    type: Type.Literal("expectText"),
+    target: Type.Union([
+      Type.Object({ by: Type.Literal("css"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+      Type.Object({ by: Type.Literal("id"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+      Type.Object({ by: Type.Literal("role"), role: Type.String({ minLength: 1, maxLength: 64 }), name: Type.Optional(Type.String({ maxLength: 512 })) }),
+      Type.Object({ by: Type.Literal("label"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+      Type.Object({ by: Type.Literal("placeholder"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+      Type.Object({ by: Type.Literal("text"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+      Type.Object({ by: Type.Literal("testId"), value: Type.String({ minLength: 1, maxLength: 512 }) }),
+    ]),
+    text: Type.String({ minLength: 1, maxLength: 4096 }),
+    exact: Type.Optional(Type.Boolean()),
+  }),
+  Type.Object({
+    type: Type.Literal("expectVisible"),
+    target: Type.Any(),
+  }),
+  Type.Object({
+    type: Type.Literal("expectCount"),
+    target: Type.Any(),
+    count: Type.Integer({ minimum: 0, maximum: 100 }),
+  }),
+  Type.Object({
+    type: Type.Literal("expectAttribute"),
+    target: Type.Any(),
+    name: Type.String({ pattern: "^[A-Za-z_:][A-Za-z0-9_.:-]{0,63}$", maxLength: 64 }),
+    value: Type.Optional(Type.String({ maxLength: 4096 })),
+    present: Type.Optional(Type.Boolean()),
+  }),
+  Type.Object({
+    type: Type.Literal("expectUrl"),
+    value: Type.String({ minLength: 1, maxLength: 512 }),
+    mode: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("contains"), Type.Literal("startsWith")])),
+  }),
+  Type.Object({
+    type: Type.Literal("expectElementState"),
+    target: Type.Any(),
+    state: Type.Union([
+      Type.Literal("visible"),
+      Type.Literal("hidden"),
+      Type.Literal("enabled"),
+      Type.Literal("disabled"),
+      Type.Literal("checked"),
+      Type.Literal("unchecked"),
+      Type.Literal("expanded"),
+      Type.Literal("collapsed"),
+    ]),
+  }),
+]);
+
 export default function (pi: ExtensionAPI) {
   if (process.env[CHILD_GUARD_ENV] !== "1") {
     throw new Error(`${TOOL_NAME} is child-only and may only be loaded by the CRM dispatcher.`);
@@ -1150,7 +1324,7 @@ export default function (pi: ExtensionAPI) {
     name: TOOL_NAME,
     label: "CRM Inspector",
     description:
-      "Security-gated CRM inspector. This isolated child session accepts a fixed page_id or a custom path, plus bounded UI inspection actions, and exactly one inspection call.",
+      "Security-gated CRM inspector. This isolated child session accepts a fixed page_id or a custom path, bounded UI actions, and bounded post-action assertions.",
     promptSnippet: "Inspect the fixed CRM page through the security-gated browser capability",
     promptGuidelines: [
       "Call inspect_crm_page exactly once with the requested page_id and the provided bounded UI actions, when any.",
@@ -1164,27 +1338,14 @@ export default function (pi: ExtensionAPI) {
       path: Type.Optional(
         Type.String({ description: "Relative path on the CRM app origin; required when page_id='custom'." }),
       ),
-      actions: Type.Optional(
-        Type.Array(
-          Type.Object({
-            type: Type.Literal("click"),
-            selector: Type.String({ minLength: 1, maxLength: 512 }),
-            waitFor: Type.Optional(
-              Type.Object({
-                selector: Type.String({ minLength: 1, maxLength: 512 }),
-                state: Type.Union([
-                  Type.Literal("visible"),
-                  Type.Literal("hidden"),
-                  Type.Literal("attached"),
-                  Type.Literal("detached"),
-                ]),
-                timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
-              }),
-            ),
-          }),
-          { maxItems: MAX_INSPECT_ACTIONS, description: "Optional deterministic UI actions. Each action may wait for a concrete DOM state." },
-        ),
-      ),
+      actions: Type.Optional(Type.Array(Type.Any(), {
+        maxItems: MAX_INSPECT_ACTIONS,
+        description: "Optional deterministic UI actions; validated by the shared protocol.",
+      })),
+      assertions: Type.Optional(Type.Array(InspectAssertionSchema, {
+        maxItems: MAX_INSPECT_ASSERTIONS,
+        description: "Optional bounded assertions evaluated after all actions.",
+      })),
       screenshot: Type.Optional(Type.Boolean({ description: "Capture a viewport screenshot after actions and DOM stabilization." })),
     }),
     async execute(_toolCallId, params, signal) {
@@ -1212,6 +1373,7 @@ export default function (pi: ExtensionAPI) {
         signal,
         params.path as string | undefined,
         (params.actions as InspectAction[] | undefined) ?? [],
+        (params.assertions as InspectAssertion[] | undefined) ?? [],
         params.screenshot === true,
       );
       const result = execution.result;
