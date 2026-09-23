@@ -1,3 +1,5 @@
+[![CI](https://github.com/oleg3190/pi-crm-inspector/actions/workflows/ci.yml/badge.svg)](https://github.com/oleg3190/pi-crm-inspector/actions/workflows/ci.yml)
+
 # pi-crm-inspector v3.1.0
 
 ## Architecture
