@@ -105,7 +105,7 @@ test("browser inspection supports deterministic form actions", async (t) => {
           <label for="secret">API secret</label>
           <input id="secret" type="password" placeholder="Secret value" />
 
-          <div id="status" role="combobox" aria-label="Status" aria-expanded="false" tabindex="0"></div>
+          <div id="status" role="combobox" aria-label="Status" aria-expanded="false" tabindex="0" style="display:inline-block;width:120px;height:24px"></div>
           <div id="options" style="display:none">
             <div role="option" aria-selected="false">Open</div>
           </div>
@@ -128,7 +128,10 @@ test("browser inspection supports deterministic form actions", async (t) => {
           status.setAttribute("aria-activedescendant", "status-open");
         });
         document.querySelector("#query").addEventListener("keydown", (event) => {
-          if (event.key === "Enter") result.hidden = false;
+          if (event.key === "Enter") {
+            event.preventDefault();
+            result.hidden = false;
+          }
         });
         document.querySelector("#apply").addEventListener("click", (event) => {
           event.preventDefault();
