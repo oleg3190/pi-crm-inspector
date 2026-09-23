@@ -83,86 +83,138 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal: Ab
 }
 
 const DEFAULT_TEXT_REPLACEMENT = "ipsum delorum";
-const DATE_PATTERN = /(?<!\d)\d{2}[.-]\d{2}[.-]\d{4}(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
+const DATE_PATTERN = /(?<!\\d)(?:\\d{2}[.\\/-]\\d{2}[.\\/-]\\d{4}|\\d{4}-\\d{2}-\\d{2})(?:\\s+\\d{2}:\\d{2}:\\d{2})?(?!\\d)/gu;
 
-export function anonymizeTextContent(text: string, replacement: string = DEFAULT_TEXT_REPLACEMENT): string {
-  let result = "";
-  let lastIndex = 0;
+type TextRange = readonly [number, number];
 
-  for (const match of text.matchAll(DATE_PATTERN)) {
-    const index = match.index ?? 0;
-    result += anonymizeNonDateText(text.slice(lastIndex, index), replacement);
-    result += match[0];
-    lastIndex = index + match[0].length;
-  }
-
-  return result + anonymizeNonDateText(text.slice(lastIndex), replacement);
+function findDateRanges(text: string): TextRange[] {
+  return [...text.matchAll(DATE_PATTERN)].map((match) => {
+    const start = match.index ?? 0;
+    return [start, start + match[0].length] as const;
+  });
 }
 
 function anonymizeNonDateText(text: string, replacement: string): string {
   return text
-    .replace(/\d/gu, "7")
-    .replace(/[^\d\s\p{P}]+/gu, replacement);
+    .replace(/\\d/gu, "7")
+    .replace(/[^\\d\\s\\p{P}]+/gu, replacement);
+}
+
+function anonymizeSegment(text: string, protectedRanges: TextRange[], offset: number, replacement: string): string {
+  let result = "";
+  let cursor = 0;
+
+  for (const [rangeStart, rangeEnd] of protectedRanges) {
+    if (rangeEnd <= offset || rangeStart >= offset + text.length) continue;
+
+    const localStart = Math.max(rangeStart - offset, 0);
+    const localEnd = Math.min(rangeEnd - offset, text.length);
+
+    if (localStart > cursor) {
+      result += anonymizeNonDateText(text.slice(cursor, localStart), replacement);
+    }
+
+    result += text.slice(localStart, localEnd);
+    cursor = localEnd;
+  }
+
+  return result + anonymizeNonDateText(text.slice(cursor), replacement);
+}
+
+export function anonymizeTextSegments(
+  segments: readonly string[],
+  replacement: string = DEFAULT_TEXT_REPLACEMENT,
+): string[] {
+  const combined = segments.join("");
+  const protectedRanges = findDateRanges(combined);
+
+  let offset = 0;
+  return segments.map((segment) => {
+    const result = anonymizeSegment(segment, protectedRanges, offset, replacement);
+    offset += segment.length;
+    return result;
+  });
+}
+
+export function anonymizeTextContent(text: string, replacement: string = DEFAULT_TEXT_REPLACEMENT): string {
+  return anonymizeTextSegments([text], replacement)[0] ?? "";
 }
 
 function buildTextReplacementScript(replacement: string = DEFAULT_TEXT_REPLACEMENT): string {
   const script = [
     "(() => {",
     "  const replacement = __REPLACEMENT__;",
-    "  const datePattern = /(?<!\\d)\\d{2}[.-]\\d{2}[.-]\\d{4}(?:\\s+\\d{2}:\\d{2}:\\d{2})?(?!\\d)/gu;",
+    "  const datePattern = /(?<!\\\\d)(?:\\\\d{2}[.\\\\/-]\\\\d{2}[.\\\\/-]\\\\d{4}|\\\\d{4}-\\\\d{2}-\\\\d{2})(?:\\\\s+\\\\d{2}:\\\\d{2}:\\\\d{2})?(?!\\\\d)/gu;",
     '  const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "TEMPLATE"]);',
     "",
+    "  const findDateRanges = (text) => [...text.matchAll(datePattern)].map((match) => {",
+    "    const start = match.index ?? 0;",
+    "    return [start, start + match[0].length];",
+    "  });",
+    "",
     "  const anonymizeNonDateText = (text) => text",
-    '    .replace(/\\d/gu, "7")',
-    '    .replace(/[^\\d\\s\\p{P}]+/gu, replacement);',
+    '    .replace(/\\\\d/gu, "7")',
+    '    .replace(/[^\\\\d\\\\s\\\\p{P}]+/gu, replacement);',
     "",
-    "  const anonymizeTextContent = (text) => {",
+    "  const anonymizeSegment = (text, protectedRanges, offset) => {",
     '    let result = "";',
-    "    let lastIndex = 0;",
+    "    let cursor = 0;",
     "",
-    "    for (const match of text.matchAll(datePattern)) {",
-    "      const index = match.index ?? 0;",
-    "      result += anonymizeNonDateText(text.slice(lastIndex, index));",
-    "      result += match[0];",
-    "      lastIndex = index + match[0].length;",
+    "    for (const [rangeStart, rangeEnd] of protectedRanges) {",
+    "      if (rangeEnd <= offset || rangeStart >= offset + text.length) continue;",
+    "      const localStart = Math.max(rangeStart - offset, 0);",
+    "      const localEnd = Math.min(rangeEnd - offset, text.length);",
+    "      if (localStart > cursor) result += anonymizeNonDateText(text.slice(cursor, localStart));",
+    "      result += text.slice(localStart, localEnd);",
+    "      cursor = localEnd;",
     "    }",
     "",
-    "    return result + anonymizeNonDateText(text.slice(lastIndex));",
+    "    return result + anonymizeNonDateText(text.slice(cursor));",
     "  };",
     "",
-    "  const replaceTextNode = (node) => {",
+    "  const shouldSkipTextNode = (node) => {",
     "    const parent = node.parentElement;",
-    "    if (!parent || ignoredTags.has(parent.tagName) || parent.closest(\"button\")) return;",
-    '    const text = node.nodeValue ?? "";',
-    "    if (!text.trim()) return;",
-    "    const anonymized = anonymizeTextContent(text);",
-    "    if (text !== anonymized) node.nodeValue = anonymized;",
+    "    return !parent || ignoredTags.has(parent.tagName) || Boolean(parent.closest(\"button\"));",
     "  };",
     "",
     "  const replaceSubtreeText = (root) => {",
-    "    if (root.nodeType === Node.TEXT_NODE) {",
-    "      replaceTextNode(root);",
-    "      return;",
-    "    }",
     "    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);",
     "    const textNodes = [];",
     "    let node;",
-    "    while ((node = walker.nextNode())) textNodes.push(node);",
-    "    for (const textNode of textNodes) replaceTextNode(textNode);",
+    "    while ((node = walker.nextNode())) {",
+    "      if (!shouldSkipTextNode(node) && node.nodeValue?.trim()) textNodes.push(node);",
+    "    }",
+    "",
+    "    const segments = textNodes.map((textNode) => textNode.nodeValue ?? \"\");",
+    "    const anonymizedSegments = (() => {",
+    "      const combined = segments.join(\"\");",
+    "      const protectedRanges = findDateRanges(combined);",
+    "      let offset = 0;",
+    "      return segments.map((segment) => {",
+    "        const result = anonymizeSegment(segment, protectedRanges, offset);",
+    "        offset += segment.length;",
+    "        return result;",
+    "      });",
+    "    })();",
+    "",
+    "    textNodes.forEach((textNode, index) => {",
+    "      if (textNode.nodeValue !== anonymizedSegments[index]) textNode.nodeValue = anonymizedSegments[index];",
+    "    });",
     "  };",
     "",
     "  const install = () => {",
     "    const root = document.documentElement || document;",
     "    replaceSubtreeText(root);",
-    "    const observer = new MutationObserver((mutations) => {",
-    "      for (const mutation of mutations) {",
-    '        if (mutation.type === "characterData") {',
-    "          replaceTextNode(mutation.target);",
-    "          continue;",
-    "        }",
-    "        for (const addedNode of mutation.addedNodes) replaceSubtreeText(addedNode);",
-    "      }",
-    "    });",
+    "    let scanScheduled = false;",
+    "    const scheduleScan = () => {",
+    "      if (scanScheduled) return;",
+    "      scanScheduled = true;",
+    "      queueMicrotask(() => {",
+    "        scanScheduled = false;",
+    "        replaceSubtreeText(root);",
+    "      });",
+    "    };",
+    "    const observer = new MutationObserver(scheduleScan);",
     "    observer.observe(root, { childList: true, characterData: true, subtree: true });",
     "  };",
     "",
@@ -177,6 +229,7 @@ function buildTextReplacementScript(replacement: string = DEFAULT_TEXT_REPLACEME
 async function installTextReplacement(page: Page, replacement: string = DEFAULT_TEXT_REPLACEMENT): Promise<void> {
   await page.addInitScript({ content: buildTextReplacementScript(replacement) });
 }
+
 function requireConfiguration(): void {
   // URL destinations are intentionally unrestricted.
 }
