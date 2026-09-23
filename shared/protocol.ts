@@ -72,12 +72,23 @@ export type RequestFailure = {
   truncated?: boolean;
 };
 
+export type InspectInteractionResult = {
+  type: "click";
+  selector: string;
+  ok: boolean;
+  matched: number;
+  url?: string;
+  error?: string;
+};
+
 export type InspectSuccess = {
   status: "success";
   traceId: string;
   pageId: PageId;
   durationMs: number;
   pageText: string;
+  domSnapshot: string;
+  interactions: InspectInteractionResult[];
   console: ConsoleLog[];
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
@@ -140,6 +151,8 @@ const MAX_TRACE_ID_LENGTH = 128;
 const MAX_ERROR_MESSAGE_LENGTH = 2048;
 const MAX_LOG_TEXT_LENGTH = 8192;
 const MAX_PAGE_TEXT_LENGTH = 65536;
+const MAX_DOM_SNAPSHOT_LENGTH = 65536;
+const MAX_INTERACTIONS = 8;
 
 function isBoundedString(value: unknown, maxLen: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLen;
@@ -187,6 +200,18 @@ function isPageError(value: unknown): value is PageError {
   );
 }
 
+function isInspectInteractionResult(value: unknown): value is InspectInteractionResult {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (item.type !== "click") return false;
+  if (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 512) return false;
+  if (typeof item.ok !== "boolean") return false;
+  if (!isFiniteNonNegativeInteger(item.matched)) return false;
+  if ("url" in item && item.url !== undefined && typeof item.url !== "string") return false;
+  if ("error" in item && item.error !== undefined && (typeof item.error !== "string" || item.error.length > 2048)) return false;
+  return true;
+}
+
 function isRequestFailure(value: unknown): value is RequestFailure {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
@@ -203,6 +228,8 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if (!isPageId(value.pageId)) return false;
   if (!isFiniteNonNegativeInteger(value.durationMs)) return false;
   if (requirePageText && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
+  if (requirePageText && (typeof value.domSnapshot !== "string" || value.domSnapshot.length > MAX_DOM_SNAPSHOT_LENGTH)) return false;
+  if (requirePageText && (!Array.isArray(value.interactions) || !value.interactions.every(isInspectInteractionResult) || value.interactions.length > MAX_INTERACTIONS)) return false;
   if (!requirePageText && value.pageText !== undefined && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
   if (!Array.isArray(value.console) || !value.console.every(isConsoleLog)) return false;
   if (!Array.isArray(value.pageErrors) || !value.pageErrors.every(isPageError)) return false;
