@@ -1044,7 +1044,10 @@ export default function (pi: ExtensionAPI) {
         params.screenshot === true,
       );
       const result = execution.result;
-      const content: Array<Record<string, string>> = [{ type: "text", text: JSON.stringify(result) }];
+      const content: Array<
+        | { type: "text"; text: string }
+        | { type: "image"; data: string; mimeType: "image/png" }
+      > = [{ type: "text", text: JSON.stringify(result) }];
       if (execution.screenshotData && result.status === "success") {
         content.push({ type: "image", data: execution.screenshotData, mimeType: "image/png" });
       }
