@@ -28,6 +28,9 @@ import type {
   RequestFailure,
   SecurityEvent,
   InspectInteractionResult,
+  InspectElement,
+  InspectScreenshot,
+  InspectWaitFor,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 
@@ -91,6 +94,8 @@ const MAX_DOM_DEPTH = 12;
 const MAX_CLICK_ACTIONS = 8;
 const DOM_STABILITY_QUIET_MS = 350;
 const DOM_STABILITY_MAX_MS = 3_000;
+const MAX_A11Y_ELEMENTS = 100;
+const MAX_SCREENSHOT_BYTES = 1_500_000;
 const DATE_PATTERN = /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
 type TextRange = readonly [number, number];
@@ -241,8 +246,99 @@ async function installTextReplacement(page: Page, replacement: string = DEFAULT_
 type InspectAction = {
   type: "click";
   selector: string;
+  waitFor?: InspectWaitFor;
 };
 
+type InspectExecution = {
+  result: InspectResult;
+  screenshotData?: string;
+};
+
+async function captureAccessibilityElements(page: Page): Promise<InspectElement[]> {
+  return page.locator("body").evaluate((root, options) => {
+    const maskText = (value: string): string => {
+      const protectedParts: string[] = [];
+      const protectedText = value.replace(
+        /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu,
+        (match) => {
+          protectedParts.push(match);
+          return String.fromCharCode(0) + String(protectedParts.length - 1) + String.fromCharCode(0);
+        },
+      );
+      const masked = protectedText
+        .replace(/\d/gu, "7")
+        .replace(/[\p{L}\p{M}]+/gu, "ipsum");
+      return masked.replace(new RegExp(String.fromCharCode(0) + "(\\d+)" + String.fromCharCode(0), "gu"), (_match, index) => protectedParts[Number(index)] ?? "");
+    };
+
+    const stableSelector = (element: Element): string => {
+      const parts: string[] = [];
+      let current: Element | null = element;
+      while (current && current !== root) {
+        const tag = current.tagName.toLowerCase();
+        let index = 1;
+        let sibling = current.previousElementSibling;
+        while (sibling) {
+          if (sibling.tagName === current.tagName) index++;
+          sibling = sibling.previousElementSibling;
+        }
+        parts.unshift(tag + ":nth-of-type(" + index + ")");
+        current = current.parentElement;
+      }
+      return parts.join(" > ");
+    };
+
+    const kindOf = (element: Element): InspectElement["kind"] => {
+      const tag = element.tagName.toLowerCase();
+      const role = element.getAttribute("role");
+      if (role === "combobox") return "combobox";
+      if (tag === "button" || role === "button") return "button";
+      if (tag === "a" || role === "link") return "link";
+      if (tag === "select") return "select";
+      if (tag === "textarea") return "textarea";
+      if (tag === "input") return element.getAttribute("type") === "checkbox" ? "checkbox" : "input";
+      return "other";
+    };
+
+    const isVisible = (element: Element): boolean => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    };
+
+    const nameOf = (element: Element): string | undefined => {
+      const aria = element.getAttribute("aria-label");
+      if (aria) return maskText(aria).slice(0, 160);
+      const labelledBy = element.getAttribute("aria-labelledby");
+      if (labelledBy) {
+        const text = labelledBy.split(/\s+/u).map((id) => document.getElementById(id)?.textContent ?? "").join(" ").trim();
+        if (text) return maskText(text).slice(0, 160);
+      }
+      const label = element.closest("label")?.textContent?.trim();
+      if (label) return maskText(label).slice(0, 160);
+      const text = element.textContent?.trim();
+      return text ? maskText(text).slice(0, 160) : undefined;
+    };
+
+    const candidates = Array.from(root.querySelectorAll("button,a,input,select,textarea,[role],[tabindex]"));
+    return candidates.slice(0, options.maxElements).map((element) => {
+      const kind = kindOf(element);
+      const formControl = element as HTMLInputElement | HTMLButtonElement | HTMLSelectElement;
+      const item: InspectElement = {
+        kind,
+        selector: stableSelector(element),
+        role: element.getAttribute("role") || undefined,
+        name: nameOf(element),
+        visible: isVisible(element),
+      };
+      if ("disabled" in formControl) item.enabled = !(formControl as HTMLInputElement).disabled;
+      if ("checked" in formControl && typeof (formControl as HTMLInputElement).checked === "boolean") item.checked = (formControl as HTMLInputElement).checked;
+      const expanded = element.getAttribute("aria-expanded");
+      if (expanded === "true" || expanded === "false") item.expanded = expanded === "true";
+      return item;
+    });
+  }, { maxElements: MAX_A11Y_ELEMENTS });
+}
 async function captureDomSnapshot(page: Page): Promise<string> {
   const snapshot = await page.locator("body").evaluate((root, options) => {
     const lines: string[] = [];
@@ -267,9 +363,22 @@ async function captureDomSnapshot(page: Page): Promise<string> {
       "placeholder",
     ]);
 
+    const maskUiText = (value: string): string => {
+      const protectedParts: string[] = [];
+      const protectedText = value.replace(
+        /(?<!\\d)(?:\\d{2}[.\\/-]\\d{2}[.\\/-]\\d{4}|\\d{4}-\\d{2}-\\d{2})(?:\\s+\\d{2}:\\d{2}:\\d{2})?(?!\\d)/gu,
+        (match) => {
+          protectedParts.push(match);
+          return String.fromCharCode(0) + String(protectedParts.length - 1) + String.fromCharCode(0);
+        },
+      );
+      const masked = protectedText.replace(/\\d/gu, "7").replace(/[\\p{L}\\p{M}]+/gu, "ipsum");
+      return masked.replace(new RegExp(String.fromCharCode(0) + "(\\\\d+)" + String.fromCharCode(0), "gu"), (_match, index) => protectedParts[Number(index)] ?? "");
+    };
+
     const textOf = (element: Element): string => {
       if (element.children.length !== 0) return "";
-      return (element.textContent ?? "").replace(/\\s+/gu, " ").trim().slice(0, 240);
+      return maskUiText((element.textContent ?? "").replace(/\\s+/gu, " ").trim()).slice(0, 240);
     };
 
     const escape = (value: string): string => value.replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;");
@@ -279,7 +388,10 @@ async function captureDomSnapshot(page: Page): Promise<string> {
       for (const attr of Array.from(element.attributes)) {
         if (!safeAttrNames.has(attr.name)) continue;
         if (attr.value.length === 0) attrs.push(attr.name);
-        else attrs.push(`${attr.name}="${escape(attr.value.slice(0, 240))}"`);
+        else {
+          const value = /^(aria-label|placeholder)$/u.test(attr.name) ? maskUiText(attr.value) : attr.value;
+          attrs.push(`${attr.name}="${escape(value.slice(0, 240))}"`);
+        }
       }
 
       const tag = element.tagName.toLowerCase();
@@ -443,6 +555,16 @@ async function runInspectActions(
 
       await withTimeout(locator.first().click({ timeout: CRM_POLICY.limits.operationTimeoutMs }), CRM_POLICY.limits.operationTimeoutMs, signal);
       await waitForDomStability(page, signal);
+      if (action.waitFor) {
+        await withTimeout(
+          page.locator(action.waitFor.selector).waitFor({
+            state: action.waitFor.state,
+            timeout: action.waitFor.timeoutMs ?? CRM_POLICY.limits.operationTimeoutMs,
+          }),
+          action.waitFor.timeoutMs ?? CRM_POLICY.limits.operationTimeoutMs,
+          signal,
+        );
+      }
 
       results.push({
         type: "click",
@@ -450,6 +572,7 @@ async function runInspectActions(
         ok: true,
         matched,
         url: page.url(),
+        ...(action.waitFor ? { waitFor: action.waitFor } : {}),
       });
     } catch (error) {
       results.push({
@@ -466,6 +589,17 @@ async function runInspectActions(
   return results;
 }
 
+async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
+  const image = await page.screenshot({ type: "png", scale: "css", animations: "disabled" });
+  if (image.length > MAX_SCREENSHOT_BYTES) {
+    throw new Error("Requested screenshot exceeded the 1.5 MB safety limit");
+  }
+  const viewport = await page.evaluate(() => ({
+    width: document.documentElement.clientWidth,
+    height: document.documentElement.clientHeight,
+  }));
+  return { data: image.toString("base64"), width: viewport.width, height: viewport.height };
+}
 function requireConfiguration(): void {
   // URL destinations are intentionally unrestricted.
 }
@@ -782,17 +916,19 @@ async function inspectPage(
     await waitForDomStability(mainPage, signal);
 
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
-    if (derivedBlock) return blockedResult(derivedBlock);
+    if (derivedBlock) return { result: blockedResult(derivedBlock) };
 
     const interactions = await runInspectActions(mainPage, actions, signal);
+    const elements = await captureAccessibilityElements(mainPage);
     const rawPageText = await mainPage.locator("body").innerText();
     const scrubbedPageText = scrubSecrets(rawPageText, secrets);
     const pageText = scrubbedPageText.length <= MAX_PAGE_TEXT_CHARS
       ? scrubbedPageText
       : `${scrubbedPageText.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
     const domSnapshot = await captureDomSnapshot(mainPage);
+    const screenshotCapture = screenshotRequested ? await captureViewportScreenshot(mainPage) : undefined;
 
-    return {
+    const result: InspectSuccess = {
       status: "success",
       traceId,
       pageId,
@@ -800,17 +936,21 @@ async function inspectPage(
       pageText,
       domSnapshot,
       interactions,
+      elements,
+      ...(screenshotCapture ? { screenshot: { mimeType: "image/png" as const, width: screenshotCapture.width, height: screenshotCapture.height } } : {}),
       console: consoleEvents,
       pageErrors,
       requestFailures,
       securityEvents,
       droppedEvents,
-    } satisfies InspectSuccess;
+    };
+    return { result, screenshotData: screenshotCapture?.data };
   } catch (error) {
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
     if (derivedBlock) return blockedResult(derivedBlock);
 
     return {
+      result: {
       status: "error",
       traceId,
       pageId,
@@ -818,7 +958,8 @@ async function inspectPage(
       code: classifyError(error, externalSignal),
       message: scrubSecrets(error instanceof Error ? error.message : String(error), secrets),
       securityEvents,
-    } satisfies InspectError;
+      } satisfies InspectError,
+    };
   } finally {
     await closeContextAndBrowser(context, browser);
     context = undefined;
@@ -857,11 +998,27 @@ export default function (pi: ExtensionAPI) {
         Type.String({ description: "Relative path on the CRM app origin; required when page_id='custom'." }),
       ),
       actions: Type.Optional(
-        Type.Array(InspectActionSchema, {
-          maxItems: MAX_CLICK_ACTIONS,
-          description: "Optional safe UI actions. Currently supports CSS/Playwright selector clicks.",
-        }),
+        Type.Array(
+          Type.Object({
+            type: Type.Literal("click"),
+            selector: Type.String({ minLength: 1, maxLength: 512 }),
+            waitFor: Type.Optional(
+              Type.Object({
+                selector: Type.String({ minLength: 1, maxLength: 512 }),
+                state: Type.Optional(Type.Union([
+                  Type.Literal("visible"),
+                  Type.Literal("hidden"),
+                  Type.Literal("attached"),
+                  Type.Literal("detached"),
+                ])),
+                timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+              }),
+            ),
+          }),
+          { maxItems: MAX_CLICK_ACTIONS, description: "Optional UI actions. Clicks may wait for a concrete DOM state after the click." },
+        ),
       ),
+      screenshot: Type.Optional(Type.Boolean({ description: "Capture a viewport screenshot after actions and DOM stabilization." })),
     }),
     async execute(_toolCallId, params, signal) {
       if (invocationUsed) {
@@ -883,14 +1040,20 @@ export default function (pi: ExtensionAPI) {
       }
 
       invocationUsed = true;
-      const result = await inspectPage(
+      const execution = await inspectPage(
         params.page_id,
         signal,
         params.path as string | undefined,
         (params.actions as InspectAction[] | undefined) ?? [],
+        params.screenshot === true,
       );
+      const result = execution.result;
+      const content: Array<Record<string, string>> = [{ type: "text", text: JSON.stringify(result) }];
+      if (execution.screenshotData && result.status === "success") {
+        content.push({ type: "image", data: execution.screenshotData, mimeType: "image/png" });
+      }
       return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
+        content,
         details: result,
         ...(result.status !== "success" ? { isError: true } : {}),
         terminate: true,
