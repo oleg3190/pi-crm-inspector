@@ -443,6 +443,7 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if (requirePageText && (!Array.isArray(value.interactions) || !value.interactions.every(isInspectInteractionResult) || value.interactions.length > MAX_INTERACTIONS)) return false;
   if (requirePageText && (!Array.isArray(value.elements) || !value.elements.every(isInspectElement) || value.elements.length > MAX_ELEMENTS)) return false;
   if (requirePageText && value.screenshot !== undefined && !isInspectScreenshot(value.screenshot)) return false;
+  if (requirePageText && value.screenshotSuppressed !== undefined && value.screenshotSuppressed !== "sensitive_action") return false;
   if (!requirePageText && value.pageText !== undefined && (typeof value.pageText !== "string" || value.pageText.length > MAX_PAGE_TEXT_LENGTH)) return false;
   if (!Array.isArray(value.console) || !value.console.every(isConsoleLog)) return false;
   if (!Array.isArray(value.pageErrors) || !value.pageErrors.every(isPageError)) return false;
