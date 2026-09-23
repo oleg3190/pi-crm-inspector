@@ -130,8 +130,8 @@ test("env dangerous vars — copyEnv must NOT pass NODE_OPTIONS (test via regex)
 
 test("CHILD_GUARD_ENV — inspector throws if env not set", async () => {
   const mockPi = {
-    registerTool: (name, opts) => {
-      if (name === "inspect_crm_page") {
+    registerTool: (opts) => {
+      if (opts.name === "inspect_crm_page") {
         mockPi.execute = opts.execute;
       }
     }
