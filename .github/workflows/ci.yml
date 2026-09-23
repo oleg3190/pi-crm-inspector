@@ -31,5 +31,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify Playwright version
+        run: |
+          test "$(node -p "require('./node_modules/playwright/package.json').version")" = "1.62.1"
+          test "$(node -p "require('./node_modules/playwright-core/package.json').version")" = "1.62.1"
+
       - name: Typecheck & tests
         run: npm run check
