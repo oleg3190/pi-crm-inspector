@@ -7,6 +7,7 @@ import {
   captureViewportScreenshot,
   hasSensitiveInspectAction,
   runInspectActions,
+  shouldCaptureInspectScreenshot,
   waitForDomStability,
 } from "../inspector/index.ts";
 
@@ -192,4 +193,6 @@ test("browser inspection supports deterministic form actions", async (t) => {
   assert.equal(JSON.stringify(results).includes("super-secret-token"), false);
   assert.equal(results[5].key, "Enter");
   assert.equal(hasSensitiveInspectAction(actions), true);
+  assert.equal(shouldCaptureInspectScreenshot(actions, true), false);
+  assert.equal(shouldCaptureInspectScreenshot(actions.slice(0, 4), true), true);
 });
