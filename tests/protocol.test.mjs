@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isInspectAction, isInspectTarget } from "../shared/protocol.ts";
+import { isInspectAction, isInspectAssertion, isInspectTarget } from "../shared/protocol.ts";
 
 test("inspect action protocol accepts structured targets and bounded actions", () => {
   assert.equal(isInspectTarget({ by: "css", value: "#search" }), true);
@@ -56,4 +56,76 @@ test("inspect action protocol accepts structured targets and bounded actions", (
   }), false);
 
   assert.equal(isInspectTarget({ by: "unknown", value: "x" }), false);
+});
+
+
+test("inspect assertion protocol accepts bounded pagination assertions and rejects unsafe/unbounded values", () => {
+  const target = { by: "role", role: "button", name: "Next" };
+
+  assert.equal(isInspectAssertion({
+    type: "expectText",
+    target: { by: "css", value: "#page" },
+    text: "Page 2",
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectVisible",
+    target,
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectCount",
+    target: { by: "css", value: "tbody tr" },
+    count: 25,
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectAttribute",
+    target,
+    name: "aria-disabled",
+    value: "true",
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectUrl",
+    value: "/clients?page=2",
+    mode: "contains",
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectElementState",
+    target,
+    state: "disabled",
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectCount",
+    target: { by: "css", value: "tbody tr" },
+    count: 101,
+  }), false);
+
+  assert.equal(isInspectAssertion({
+    type: "expectAttribute",
+    target,
+    name: "onmouseover",
+    value: "alert(1)",
+  }), false);
+
+  assert.equal(isInspectAssertion({
+    type: "expectUrl",
+    value: "javascript:alert(1)",
+    mode: "contains",
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectElementState",
+    target,
+    state: "unknown",
+  }), false);
+
+  assert.equal(isInspectAssertion({
+    type: "expectText",
+    target: { by: "css", value: "#page" },
+    text: "x".repeat(4097),
+  }), false);
 });
