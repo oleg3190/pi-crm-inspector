@@ -873,7 +873,82 @@ export async function runInspectAssertions(
   return results;
 }
 
+export async function sanitizePageForScreenshot(page: Page): Promise<void> {
+  await page.locator("body").evaluate((root) => {
+    const replacement = "ipsum";
+    const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+
+    const anonymizeText = (value: string): string =>
+      value.replace(/\d/gu, "7").replace(/[\p{L}\p{M}]+/gu, replacement);
+
+    const sanitizeRoot = (container: Document | DocumentFragment | Element): void => {
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const textNodes: Text[] = [];
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        const parent = node.parentElement;
+        if (!parent || ignoredTags.has(parent.tagName)) continue;
+        if (node.nodeValue) textNodes.push(node as Text);
+      }
+
+      for (const textNode of textNodes) {
+        textNode.nodeValue = anonymizeText(textNode.nodeValue ?? "");
+      }
+
+      const elements = container instanceof Element
+        ? [container, ...Array.from(container.querySelectorAll("*"))]
+        : Array.from(container.querySelectorAll("*"));
+
+      for (const element of elements) {
+        if (ignoredTags.has(element.tagName)) continue;
+
+        const tag = element.tagName.toLowerCase();
+        const formControl = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+        if ("value" in formControl && typeof formControl.value === "string") {
+          try {
+            formControl.value = anonymizeText(formControl.value);
+          } catch {
+            // Some controls expose read-only values; attributes/styles are still sanitized below.
+          }
+        }
+
+        for (const attribute of ["aria-label", "placeholder", "title", "alt"]) {
+          if (element.hasAttribute(attribute)) {
+            element.setAttribute(attribute, anonymizeText(element.getAttribute(attribute) ?? ""));
+          }
+        }
+
+        if (element.hasAttribute("value") && /^(input|textarea)$/u.test(tag)) {
+          element.setAttribute("value", anonymizeText(element.getAttribute("value") ?? ""));
+        }
+
+        if (tag.includes("-")) {
+          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
+        }
+
+        if (["IMG", "PICTURE", "CANVAS", "SVG", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
+          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
+        }
+
+        if (element.shadowRoot) sanitizeRoot(element.shadowRoot);
+      }
+    };
+
+    sanitizeRoot(root);
+
+    const style = document.createElement("style");
+    style.setAttribute("data-pi-crm-screenshot-sanitization", "true");
+    style.textContent = [
+      "*, *::before, *::after { background-image: none !important; }",
+      "*::before, *::after { content: none !important; }",
+      "img, picture, canvas, svg, video, iframe, object, embed { visibility: hidden !important; }",
+    ].join("\n");
+    document.head?.appendChild(style);
+  });
+}
+
 export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
+  await sanitizePageForScreenshot(page);
   const image = await page.screenshot({ type: "png", scale: "css", animations: "disabled" });
   if (image.length > MAX_SCREENSHOT_BYTES) {
     throw new Error("Requested screenshot exceeded the 1.5 MB safety limit");
@@ -884,6 +959,7 @@ export async function captureViewportScreenshot(page: Page): Promise<{ data: str
   }));
   return { data: image.toString("base64"), width: viewport.width, height: viewport.height };
 }
+
 function requireConfiguration(): void {
   // URL destinations are intentionally unrestricted.
 }
