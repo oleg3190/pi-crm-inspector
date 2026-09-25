@@ -355,7 +355,7 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   const bodyText = await page.locator("body").innerText();
   assert.doesNotMatch(bodyText, /Иван|555-1234/);
   assert.equal(await page.locator("#customer-input").inputValue(), "ipsum ipsum 77777");
-  assert.equal(await page.locator("#customer").getAttribute("aria-label"), "ipsum ipsum");
+  assert.equal(await page.locator("#customer").getAttribute("aria-label"), "ipsum ipsum ipsum");
   assert.equal(await page.locator("#avatar").evaluate((el) => getComputedStyle(el).visibility), "hidden");
   assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "hidden");
   assert.equal(await page.locator("#svg").evaluate((el) => getComputedStyle(el).visibility), "hidden");
