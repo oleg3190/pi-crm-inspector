@@ -5,6 +5,7 @@ import {
   captureAccessibilityElements,
   captureDomSnapshot,
   captureViewportScreenshot,
+  sanitizePageForScreenshot,
   hasSensitiveInspectAction,
   runInspectActions,
   runInspectAssertions,
@@ -308,4 +309,59 @@ test("browser inspection can verify pagination state after moving to the next pa
   }], signal);
   assert.equal(failed[0].ok, false);
   assert.equal(failed[0].error, "Text assertion failed");
+});
+
+
+test("screenshot sanitization removes textual and visual CRM PII before pixels are captured", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+  });
+
+  const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+  await page.setContent(`
+    <!doctype html>
+    <html>
+      <head>
+        <style>
+          #pseudo::before { content: "Real customer name"; }
+          #background { width: 40px; height: 40px; background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><text x='0' y='15'>PII</text></svg>"); }
+        </style>
+      </head>
+      <body>
+        <main>
+          <h1>Иван Иванов 12345</h1>
+          <button id="customer" aria-label="Open Иван Иванов">Иван Иванов</button>
+          <input id="customer-input" value="Иван Иванов 12345" placeholder="Телефон +372 555-1234">
+          <img id="avatar" alt="Иван Иванов" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'><text x='0' y='15'>Иван</text></svg>">
+          <canvas id="chart" width="100" height="50"></canvas>
+          <svg id="svg"><text>Иван Иванов</text></svg>
+          <div id="pseudo"></div>
+          <div id="background"></div>
+          <crm-secret-widget>Иван Иванов</crm-secret-widget>
+        </main>
+      </body>
+    </html>
+  `);
+
+  await page.evaluate(() => {
+    const canvas = document.querySelector("#chart");
+    const ctx = canvas.getContext("2d");
+    ctx.fillText("Иван Иванов", 5, 20);
+  });
+
+  await sanitizePageForScreenshot(page);
+
+  const bodyText = await page.locator("body").innerText();
+  assert.doesNotMatch(bodyText, /Иван|555-1234/);
+  assert.equal(await page.locator("#customer-input").inputValue(), "ipsum ipsum 77777");
+  assert.equal(await page.locator("#customer").getAttribute("aria-label"), "ipsum ipsum");
+  assert.equal(await page.locator("#avatar").evaluate((el) => getComputedStyle(el).visibility), "hidden");
+  assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "hidden");
+  assert.equal(await page.locator("#svg").evaluate((el) => getComputedStyle(el).visibility), "hidden");
+  assert.equal(await page.locator("crm-secret-widget").evaluate((el) => getComputedStyle(el).visibility), "hidden");
+  assert.equal(await page.locator("#background").evaluate((el) => getComputedStyle(el).backgroundImage), "none");
+
+  const screenshot = await captureViewportScreenshot(page);
+  assert.equal(screenshot.data.length > 0, true);
 });
