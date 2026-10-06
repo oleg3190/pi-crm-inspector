@@ -824,6 +824,44 @@ export async function runInspectActions(
   return results;
 }
 
+function compareString(actual: string, expected: string, mode: "exact" | "contains" | "startsWith"): boolean {
+  if (mode === "exact") return actual === expected;
+  if (mode === "contains") return actual.includes(expected);
+  return actual.startsWith(expected);
+}
+
+function expectedGeometryFromAssertion(assertion: Extract<InspectAssertion, { type: "expectGeometry" }>): Record<string, unknown> {
+  return {
+    ...(assertion.width ? { width: assertion.width } : {}),
+    ...(assertion.height ? { height: assertion.height } : {}),
+    ...(assertion.x ? { x: assertion.x } : {}),
+    ...(assertion.y ? { y: assertion.y } : {}),
+    ...(assertion.visible !== undefined ? { visible: assertion.visible } : {}),
+  };
+}
+
+async function readGeometry(locator: Locator): Promise<InspectGeometry> {
+  return locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0,
+    };
+  });
+}
+
+function checkBound(value: number, spec: { min?: number; max?: number; exact?: number } | undefined): boolean {
+  if (!spec) return true;
+  if (spec.exact !== undefined && Math.abs(value - spec.exact) > 0.5) return false;
+  if (spec.min !== undefined && value < spec.min) return false;
+  if (spec.max !== undefined && value > spec.max) return false;
+  return true;
+}
+
 export async function runInspectAssertions(
   page: Page,
   assertions: readonly InspectAssertion[],
@@ -838,14 +876,16 @@ export async function runInspectAssertions(
   for (const assertion of assertions) {
     try {
       if (assertion.type === "expectUrl") {
-        const actualUrl = page.url();
+        const actualUrl = sanitizedUrl(page.url());
         const mode = assertion.mode ?? "exact";
-        const ok = mode === "exact"
-          ? actualUrl === assertion.value
-          : mode === "contains"
-            ? actualUrl.includes(assertion.value)
-            : actualUrl.startsWith(assertion.value);
-        results.push({ type: assertion.type, ok, error: ok ? undefined : "URL assertion failed" });
+        const ok = compareString(actualUrl, sanitizedUrl(assertion.value), mode);
+        results.push({
+          type: assertion.type,
+          ok,
+          actualUrl,
+          expectedValue: assertion.value,
+          error: ok ? undefined : `URL assertion failed: expected ${mode} ${assertion.value}`,
+        });
         continue;
       }
 
@@ -877,9 +917,17 @@ export async function runInspectAssertions(
 
       switch (assertion.type) {
         case "expectText": {
-          const actual = await locator.innerText().catch(async () => (await locator.textContent()) ?? "");
+          const actual = scrubSecrets(await locator.innerText().catch(async () => (await locator.textContent()) ?? ""), [username(), password()].filter(Boolean));
           const ok = assertion.exact === true ? actual === assertion.text : actual.includes(assertion.text);
-          results.push({ type: assertion.type, target: assertion.target, ok, matched, error: ok ? undefined : "Text assertion failed" });
+          results.push({
+            type: assertion.type,
+            target: assertion.target,
+            ok,
+            matched,
+            actualText: actual.length > MAX_PAGE_TEXT_CHARS ? `${actual.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]` : actual,
+            expectedValue: assertion.text,
+            error: ok ? undefined : "Text assertion failed",
+          });
           break;
         }
         case "expectVisible": {
@@ -889,15 +937,18 @@ export async function runInspectAssertions(
         }
         case "expectAttribute": {
           const actual = await locator.getAttribute(assertion.name);
+          const safeActual = actual === null ? null : scrubSecrets(actual, [username(), password()].filter(Boolean));
           const present = actual !== null;
-          const ok = (assertion.present === undefined || present === assertion.present)
-            && (assertion.value === undefined || actual === assertion.value);
+          const ok = (assertion.present === undefined || present === assertion.present) &&
+            (assertion.value === undefined || actual === assertion.value);
           results.push({
             type: assertion.type,
             target: assertion.target,
             ok,
             matched,
             attributePresent: present,
+            actualValue: safeActual,
+            expectedValue: assertion.value,
             error: ok ? undefined : "Attribute assertion failed",
           });
           break;
@@ -924,92 +975,52 @@ export async function runInspectAssertions(
           });
           break;
         }
+        case "expectStyle": {
+          const actualStyle = await locator.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), assertion.property);
+          const mode = assertion.mode ?? "exact";
+          const ok = compareString(actualStyle.trim(), assertion.value, mode);
+          results.push({
+            type: assertion.type,
+            target: assertion.target,
+            ok,
+            matched,
+            property: assertion.property,
+            actualStyle: actualStyle.trim(),
+            expectedStyle: assertion.value,
+            error: ok ? undefined : `Style assertion failed for ${assertion.property}`,
+          });
+          break;
+        }
+        case "expectGeometry": {
+          const actualGeometry = await readGeometry(locator);
+          const ok = checkBound(actualGeometry.width, assertion.width)
+            && checkBound(actualGeometry.height, assertion.height)
+            && checkBound(actualGeometry.x, assertion.x)
+            && checkBound(actualGeometry.y, assertion.y)
+            && (assertion.visible === undefined || actualGeometry.visible === assertion.visible);
+          results.push({
+            type: assertion.type,
+            target: assertion.target,
+            ok,
+            matched,
+            actualGeometry,
+            expectedGeometry: expectedGeometryFromAssertion(assertion),
+            error: ok ? undefined : "Geometry assertion failed",
+          });
+          break;
+        }
       }
     } catch (error) {
       results.push({
         type: assertion.type,
         ...("target" in assertion ? { target: assertion.target } : {}),
         ok: false,
-        error: scrubSecrets(error instanceof Error ? error.message : String(error), []),
+        error: scrubSecrets(error instanceof Error ? error.message : String(error), [username(), password()].filter(Boolean)),
       });
     }
   }
 
   return results;
-}
-
-export async function sanitizePageForScreenshot(page: Page): Promise<void> {
-  await page.locator("body").evaluate((root) => {
-    const replacement = "ipsum";
-    const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
-
-    const anonymizeText = (value: string): string =>
-      value.replace(/\d/gu, "7").replace(/[\p{L}\p{M}]+/gu, replacement);
-
-    const sanitizeRoot = (container: Document | DocumentFragment | Element): void => {
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      const textNodes: Text[] = [];
-      let node: Node | null;
-      while ((node = walker.nextNode())) {
-        const parent = node.parentElement;
-        if (!parent || ignoredTags.has(parent.tagName)) continue;
-        if (node.nodeValue) textNodes.push(node as Text);
-      }
-
-      for (const textNode of textNodes) {
-        textNode.nodeValue = anonymizeText(textNode.nodeValue ?? "");
-      }
-
-      const elements = container instanceof Element
-        ? [container, ...Array.from(container.querySelectorAll("*"))]
-        : Array.from(container.querySelectorAll("*"));
-
-      for (const element of elements) {
-        if (ignoredTags.has(element.tagName)) continue;
-
-        const tag = element.tagName.toLowerCase();
-        const formControl = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-        if ("value" in formControl && typeof formControl.value === "string") {
-          try {
-            formControl.value = anonymizeText(formControl.value);
-          } catch {
-            // Some controls expose read-only values; attributes/styles are still sanitized below.
-          }
-        }
-
-        for (const attribute of ["aria-label", "placeholder", "title", "alt"]) {
-          if (element.hasAttribute(attribute)) {
-            element.setAttribute(attribute, anonymizeText(element.getAttribute(attribute) ?? ""));
-          }
-        }
-
-        if (element.hasAttribute("value") && /^(input|textarea)$/u.test(tag)) {
-          element.setAttribute("value", anonymizeText(element.getAttribute("value") ?? ""));
-        }
-
-        if (tag.includes("-")) {
-          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
-        }
-
-        if (["IMG", "PICTURE", "CANVAS", "SVG", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
-          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
-        }
-
-        if (element.shadowRoot) sanitizeRoot(element.shadowRoot);
-      }
-    };
-
-    sanitizeRoot(root);
-
-    const style = document.createElement("style");
-    style.setAttribute("data-pi-crm-screenshot-sanitization", "true");
-    style.textContent = [
-      "*, *::before, *::after { background-image: none !important; }",
-      "*::before, *::after { content: none !important; }",
-      "img, picture, canvas, svg, video, iframe, object, embed { visibility: hidden !important; }",
-    ].join("\n");
-    document.head?.appendChild(style);
-  });
 }
 
 export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
