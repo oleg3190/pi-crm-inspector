@@ -431,7 +431,7 @@ test("browser inspection supports first-class waits, action-local checkpoints, a
         type: "expectStyle",
         target: { by: "id", value: "calendar" },
         property: "width",
-        value: "100%",
+        value: "1000px",
       }, {
         type: "expectGeometry",
         target: { by: "id", value: "calendar" },
