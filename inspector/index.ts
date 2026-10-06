@@ -276,7 +276,7 @@ type InspectExecution = {
   screenshotData?: string;
 };
 
-export async function captureAccessibilityElements(page: Page): Promise<InspectElement[]> {
+export async function captureAccessibilityElements(page: Page, maxElements = MAX_A11Y_ELEMENTS, mode: "interactive" | "all" = "interactive"): Promise<InspectElement[]> {
   return page.locator("body").evaluate((root, options) => {
     const maskText = (value: string): string => {
       const protectedParts: string[] = [];
@@ -342,7 +342,8 @@ export async function captureAccessibilityElements(page: Page): Promise<InspectE
       return text ? maskText(text).slice(0, 160) : undefined;
     };
 
-    const candidates = Array.from(root.querySelectorAll("button,a,input,select,textarea,[role],[tabindex]"));
+    const candidates = Array.from(root.querySelectorAll("button,a,input,select,textarea,[role],[tabindex]"))
+      .filter((element) => options.mode === "all" || (element.matches("button,a,input,select,textarea,[role],[tabindex]") && isVisible(element)));
     return candidates.slice(0, options.maxElements).map((element) => {
       const kind = kindOf(element);
       const formControl = element as HTMLInputElement | HTMLButtonElement | HTMLSelectElement;
@@ -359,10 +360,10 @@ export async function captureAccessibilityElements(page: Page): Promise<InspectE
       if (expanded === "true" || expanded === "false") item.expanded = expanded === "true";
       return item;
     });
-  }, { maxElements: MAX_A11Y_ELEMENTS });
+  }, { maxElements, mode });
 }
-export async function captureDomSnapshot(page: Page): Promise<string> {
-  const snapshot = await page.locator("body").evaluate((root, options) => {
+export async function captureDomSnapshot(page: Page, selector = "body"): Promise<string> {
+  const snapshot = await page.locator(selector).evaluate((root, options) => {
     const lines: string[] = [];
     let count = 0;
     const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
