@@ -541,7 +541,7 @@ export async function waitForDomStability(page: Page, signal: AbortSignal): Prom
 }
 
 export function resolveInspectTarget(page: Page, target: InspectTarget): Locator {
-  const scopedRoot = target.scope ? resolveScopeLocator(page, target.scope) : page;
+  const scopedRoot = ("scope" in target && target.scope) ? resolveScopeLocator(page, target.scope) : page;
   return resolveTargetWithin(scopedRoot, target);
 }
 
@@ -567,7 +567,7 @@ function resolveTargetWithin(root: Page | Locator, target: InspectTarget | Inspe
   }
 }
 
-function actionTarget(action: InspectAction): { target?: InspectTarget; selector?: string } {
+function actionTarget(action: Exclude<InspectAction, { type: "wait" }>): { target: InspectTarget; selector?: string } {
   if (action.type !== "click") return { target: action.target };
   if (action.target) return { target: action.target };
   if (action.selector) return { target: { by: "css", value: action.selector }, selector: action.selector };
@@ -655,34 +655,6 @@ export function shouldCaptureInspectScreenshot(
   screenshotRequested: boolean,
 ): boolean {
   return screenshotRequested && !hasSensitiveInspectAction(actions);
-}
-
-function scrubCheckpointText(value: string): string {
-  const scrubbed = scrubSecrets(value, [username(), password()].filter(Boolean));
-  return scrubbed.length <= MAX_PAGE_TEXT_CHARS
-    ? scrubbed
-    : `${scrubbed.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
-}
-
-async function captureActionCheckpoint(
-  page: Page,
-  actionIndex: number,
-  actionType: InspectAction["type"],
-  assertions: InspectAssertionResult[],
-  assertionsPassed: boolean,
-  diagnostics: InspectDiagnostics,
-): Promise<InspectCheckpoint> {
-  const rawText = await page.locator("body").innerText().catch(() => "");
-  const checkpoint: InspectCheckpoint = {
-    actionIndex,
-    actionType,
-    pageUrl: page.url(),
-    assertions,
-    assertionsPassed,
-  };
-  checkpoint.pageText = scrubCheckpointText(rawText);
-  checkpoint.domSnapshot = await captureDomSnapshot(page, diagnostics.domSelector);
-  return checkpoint;
 }
 
 function scrubCheckpointText(value: string): string {
