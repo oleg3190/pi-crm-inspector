@@ -32,6 +32,9 @@ import type {
   InspectAssertion,
   InspectAssertionResult,
   InspectTarget,
+  InspectScopeTarget,
+  InspectDiagnostics,
+  InspectCheckpoint,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 import { NetworkRecorder } from "./diagnostics.ts";
@@ -539,49 +542,37 @@ export async function waitForDomStability(page: Page, signal: AbortSignal): Prom
 }
 
 export function resolveInspectTarget(page: Page, target: InspectTarget): Locator {
+  const scopedRoot = target.scope ? resolveScopeLocator(page, target.scope) : page;
+  return resolveTargetWithin(scopedRoot, target);
+}
+
+function resolveScopeLocator(page: Page, target: InspectScopeTarget): Locator {
+  return resolveTargetWithin(page, target);
+}
+
+function resolveTargetWithin(root: Page | Locator, target: InspectTarget | InspectScopeTarget): Locator {
+  const match = "match" in target ? (target.match ?? "exact") : "exact";
+  const exact = match === "exact";
+
   switch (target.by) {
-    case "css":
-      return page.locator(target.value);
-    case "id":
-      return page.locator(`id=${target.value}`);
+    case "css": return root.locator(target.value);
+    case "id": return root.locator(`id=${target.value}`);
+    case "testId": return root.getByTestId(target.value);
     case "role":
       return target.name === undefined
-        ? page.getByRole(target.role as Parameters<Page["getByRole"]>[0])
-        : page.getByRole(target.role as Parameters<Page["getByRole"]>[0], { name: target.name, exact: true });
-    case "label":
-      return page.getByLabel(target.value, { exact: true });
-    case "placeholder":
-      return page.getByPlaceholder(target.value, { exact: true });
-    case "text":
-      return page.getByText(target.value, { exact: true });
-    case "testId":
-      return page.getByTestId(target.value);
+        ? root.getByRole(target.role as Parameters<Page["getByRole"]>[0])
+        : root.getByRole(target.role as Parameters<Page["getByRole"]>[0], { name: target.name, exact });
+    case "label": return root.getByLabel(target.value, { exact });
+    case "placeholder": return root.getByPlaceholder(target.value, { exact });
+    case "text": return root.getByText(target.value, { exact });
   }
 }
 
-function actionTarget(action: InspectAction): { target: InspectTarget; selector?: string } {
+function actionTarget(action: InspectAction): { target?: InspectTarget; selector?: string } {
   if (action.type !== "click") return { target: action.target };
   if (action.target) return { target: action.target };
   if (action.selector) return { target: { by: "css", value: action.selector }, selector: action.selector };
   throw new Error("Click action requires a target or legacy selector");
-}
-
-async function waitForActionCompletion(
-  page: Page,
-  waitFor: InspectWaitFor | undefined,
-  signal: AbortSignal,
-): Promise<void> {
-  await waitForDomStability(page, signal);
-  if (!waitFor) return;
-  const timeoutMs = waitFor.timeoutMs ?? CRM_POLICY.limits.operationTimeoutMs;
-  await withTimeout(
-    page.locator(waitFor.selector).waitFor({
-      state: waitFor.state,
-      timeout: timeoutMs,
-    }),
-    timeoutMs,
-    signal,
-  );
 }
 
 async function fillValueLength(locator: Locator): Promise<number> {
