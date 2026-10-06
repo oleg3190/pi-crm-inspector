@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.ts";
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
 import { anonymizeTextContent, anonymizeTextSegments } from "../inspector/index.ts";
-import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest, isAllowedDocumentUrl } from "../inspector/security.ts";
+import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest, isAllowedDocumentUrl, sanitizedUrl } from "../inspector/security.ts";
 import { buildChildEnv, extractChildToolResult, extractChildToolImages } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
@@ -61,7 +61,6 @@ test("text anonymization preserves digit count and number-like formatting", () =
 });
 
 test("sanitizedUrl preserves safe query parameters and redacts sensitive values", () => {
-  const { sanitizedUrl } = await import("../inspector/security.ts");
   const value = sanitizedUrl("https://crm.example.test/api/items?page=2&status=active&token=secret&foo=bar");
   assert.match(value, /page=2/);
   assert.match(value, /status=active/);
