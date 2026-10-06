@@ -584,7 +584,8 @@ export function isInspectResult(value: unknown): value is InspectResult {
     if(result.pageId!==undefined && !isPageId(result.pageId)) return false;
     if(!isFiniteNonNegativeInteger(result.durationMs) || !isErrorCode(result.code)) return false;
     if(typeof result.message!=="string" || result.message.length===0 || result.message.length>2048) return false;
-    return Array.isArray(result.securityEvents) && result.securityEvents.every(isSecurityEvent);
+    if (!Array.isArray(result.securityEvents) || !result.securityEvents.every(isSecurityEvent)) return false;
+    return result.networkRequests === undefined || (Array.isArray(result.networkRequests) && result.networkRequests.length <= 100 && result.networkRequests.every(isInspectNetworkRequest));
   }
   return false;
 }
