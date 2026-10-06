@@ -334,8 +334,9 @@ export async function captureAccessibilityElements(page: Page, maxElements = MAX
       return text ? maskText(text).slice(0, 160) : undefined;
     };
 
-    const candidates = Array.from(root.querySelectorAll("button,a,input,select,textarea,[role],[tabindex]"))
-      .filter((element) => options.mode === "all" || (element.matches("button,a,input,select,textarea,[role],[tabindex]") && isVisible(element)));
+    const candidates = options.mode === "all"
+      ? Array.from(root.querySelectorAll("*"))
+      : Array.from(root.querySelectorAll("button,a,input,select,textarea,[role],[tabindex]")).filter(isVisible);
     return candidates.slice(0, options.maxElements).map((element) => {
       const kind = kindOf(element);
       const formControl = element as HTMLInputElement | HTMLButtonElement | HTMLSelectElement;
