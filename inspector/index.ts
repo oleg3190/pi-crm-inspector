@@ -1046,10 +1046,13 @@ function classifyError(error: unknown, externalSignal: AbortSignal | undefined):
   if (/timed out/i.test(message)) return "timeout";
   if (/missing PI_CRM_(USERNAME|PASSWORD)/i.test(message)) return "missing_credentials";
   if (/PI_CRM_INSPECTOR_MODEL/i.test(message)) return "missing_child_model";
+  if (/authentication expired|http 401/i.test(message)) return "authentication_expired";
+  if (/concurrency/i.test(message)) return "concurrency_limit";
   if (/login/i.test(message)) return "login_failed";
   if (/configuration/i.test(message)) return "configuration_error";
   return "browser_error";
 }
+
 
 function blockReasonFromAbort(reason: unknown): BlockReason | undefined {
   const valid = new Set<BlockReason>([
@@ -1102,6 +1105,7 @@ async function inspectPage(
   actions: readonly InspectAction[] = [],
   assertions: readonly InspectAssertion[] = [],
   screenshotRequested = false,
+  diagnostics: InspectDiagnostics = {},
 ): Promise<InspectExecution> {
   const traceId = randomUUID();
   const startedAt = Date.now();
@@ -1169,8 +1173,10 @@ async function inspectPage(
     console: consoleEvents,
     pageErrors,
     requestFailures,
+    networkRequests: networkRecorder.entriesSnapshot,
+    checkpoints: [],
     securityEvents,
-    droppedEvents,
+    droppedEvents: droppedEvents + networkRecorder.dropped,
   });
 
 
@@ -1257,6 +1263,17 @@ async function inspectPage(
       });
 
       await route.abort("accessdenied").catch(() => undefined);
+    });
+
+    context.on("request", (request) => {
+      if (!collecting) return;
+      networkRecorder.onRequest(request);
+    });
+
+    context.on("response", (response) => {
+      if (!collecting) return;
+      if (response.status() === 401 && phase === "authenticated") authenticationExpired = true;
+      networkRecorder.onResponse(response);
     });
 
     context.on("requestfailed", (request) => {
@@ -1357,16 +1374,22 @@ async function inspectPage(
     const derivedBlock = blockReason ?? blockReasonFromAbort(securityAbort.signal.reason);
     if (derivedBlock) return { result: blockedResult(derivedBlock) };
 
-    const interactions = await runInspectActions(mainPage, actions, signal);
+    const interactions = await runInspectActions(mainPage, actions, signal, diagnostics);
     const assertionResults = await runInspectAssertions(mainPage, assertions, signal);
+    await networkRecorder.flush();
+    if (authenticationExpired) {
+      throw new Error("Authentication expired: CRM returned HTTP 401 during the authenticated inspection.");
+    }
     const assertionsPassed = assertionResults.every((assertion) => assertion.ok);
-    const elements = await captureAccessibilityElements(mainPage);
+    const elementMode = diagnostics.elementsMode ?? "interactive";
+    const maxElements = Math.min(diagnostics.maxElements ?? (elementMode === "all" ? MAX_A11Y_ELEMENTS_ALL : MAX_A11Y_ELEMENTS), MAX_A11Y_ELEMENTS_ALL);
+    const elements = await captureAccessibilityElements(mainPage, maxElements, elementMode);
     const rawPageText = await mainPage.locator("body").innerText();
     const scrubbedPageText = scrubSecrets(rawPageText, secrets);
     const pageText = scrubbedPageText.length <= MAX_PAGE_TEXT_CHARS
       ? scrubbedPageText
       : `${scrubbedPageText.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
-    const domSnapshot = await captureDomSnapshot(mainPage);
+    const domSnapshot = await captureDomSnapshot(mainPage, diagnostics.domSelector ?? "body");
     const screenshotSuppressed = screenshotRequested && hasSensitiveInspectAction(actions);
     const screenshotCapture = shouldCaptureInspectScreenshot(actions, screenshotRequested)
       ? await captureViewportScreenshot(mainPage)
@@ -1388,8 +1411,10 @@ async function inspectPage(
       console: consoleEvents,
       pageErrors,
       requestFailures,
+      networkRequests: networkRecorder.entriesSnapshot,
+      checkpoints: interactions.flatMap((interaction) => interaction.checkpoint ? [interaction.checkpoint] : []),
       securityEvents,
-      droppedEvents,
+      droppedEvents: droppedEvents + networkRecorder.dropped,
     };
     return { result, screenshotData: screenshotCapture?.data };
   } catch (error) {
