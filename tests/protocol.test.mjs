@@ -180,3 +180,17 @@ test("extended protocol accepts wait, scoped matching, local assertions, and lay
     width: { exact: -1 },
   }), false);
 });
+
+
+test("inspect result protocol accepts compact diagnostics summary and failed network metadata", async () => {
+  const { isInspectResult } = await import("../shared/protocol.ts");
+  const result = {
+    status: "success", traceId: "trace", pageId: "dashboard", durationMs: 10,
+    pageText: "", domSnapshot: "", interactions: [], assertions: [], assertionsPassed: true, elements: [],
+    console: [], pageErrors: [], requestFailures: [],
+    networkRequests: [{ id: "req", timestamp: new Date().toISOString(), method: "GET", url: "https://crm.example.test/api/fail", status: 500, failed: true, error: "server error" }],
+    securityEvents: [], diagnosticsSummary: { actionCount: 0, actionsPassed: 0, assertionCount: 0, assertionsPassed: 0, failedAssertions: 0, networkRequests: 1, failedNetworkRequests: 1, consoleErrors: 0, pageErrors: 0, checkpoints: 0 },
+    droppedEvents: 0,
+  };
+  assert.equal(isInspectResult(result), true);
+});
