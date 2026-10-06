@@ -1130,7 +1130,27 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
         }
 
         if (["IMG", "PICTURE", "CANVAS", "SVG", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
-          (element as HTMLElement).style.setProperty("visibility", "hidden", "important")export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
+          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
+        }
+
+        if (element.shadowRoot) sanitizeRoot(element.shadowRoot);
+      }
+    };
+
+    sanitizeRoot(root);
+
+    const style = document.createElement("style");
+    style.setAttribute("data-pi-crm-screenshot-sanitization", "true");
+    style.textContent = [
+      "*, *::before, *::after { background-image: none !important; }",
+      "*::before, *::after { content: none !important; }",
+      "img, picture, canvas, svg, video, iframe, object, embed { visibility: hidden !important; }",
+    ].join("\n");
+    document.head?.appendChild(style);
+  });
+}
+
+export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
   await sanitizePageForScreenshot(page);
   const image = await page.screenshot({ type: "png", scale: "css", animations: "disabled" });
   if (image.length > MAX_SCREENSHOT_BYTES) {
