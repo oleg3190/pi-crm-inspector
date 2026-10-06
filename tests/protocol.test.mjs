@@ -129,3 +129,54 @@ test("inspect assertion protocol accepts bounded pagination assertions and rejec
     text: "x".repeat(4097),
   }), false);
 });
+
+
+test("extended protocol accepts wait, scoped matching, local assertions, and layout assertions", () => {
+  assert.equal(isInspectTarget({
+    by: "text",
+    value: "4",
+    match: "exact",
+    scope: { by: "css", value: "[data-calendar='main']" },
+  }), true);
+
+  assert.equal(isInspectTarget({
+    by: "text",
+    value: "4",
+    scope: { by: "text", value: "Calendar" },
+  }), true);
+
+  assert.equal(isInspectTarget({
+    by: "css",
+    value: "#x",
+    match: "contains",
+  }), false);
+
+  assert.equal(isInspectAction({ type: "wait", durationMs: 35_000 }), true);
+  assert.equal(isInspectAction({ type: "wait", durationMs: 60_001 }), false);
+  assert.equal(isInspectAction({
+    type: "wait",
+    durationMs: 1_000,
+    assertions: [{ type: "expectVisible", target: { by: "id", value: "ready" } }],
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectStyle",
+    target: { by: "id", value: "calendar" },
+    property: "width",
+    value: "100%",
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectGeometry",
+    target: { by: "id", value: "calendar" },
+    width: { min: 900 },
+    height: { min: 400 },
+    visible: true,
+  }), true);
+
+  assert.equal(isInspectAssertion({
+    type: "expectGeometry",
+    target: { by: "id", value: "calendar" },
+    width: { exact: -1 },
+  }), true);
+});
