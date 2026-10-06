@@ -200,6 +200,42 @@ export type InspectNetworkRequest = {
   error?: string;
 };
 
+export type InspectElement = {
+  kind: "button" | "link" | "input" | "select" | "textarea" | "checkbox" | "combobox" | "other";
+  selector: string;
+  role?: string;
+  name?: string;
+  visible: boolean;
+  enabled?: boolean;
+  checked?: boolean;
+  expanded?: boolean;
+};
+
+export type InspectScreenshot = {
+  mimeType: "image/png";
+  width: number;
+  height: number;
+};
+
+export type InspectDiagnostics = {
+  captureAfterEachAction?: boolean;
+  captureOnAssertionFailure?: boolean;
+  elementsMode?: "interactive" | "all";
+  maxElements?: number;
+  domSelector?: string;
+};
+
+export type InspectResult
+  status: "error";
+  traceId: string;
+  pageId?: PageId;
+  durationMs: number;
+  code: ErrorCode;
+  message: string;
+  securityEvents: SecurityEvent[];
+  networkRequests?: InspectNetworkRequest[];
+};
+
 export type InspectSuccess = {
   status: "success";
   traceId: string;
