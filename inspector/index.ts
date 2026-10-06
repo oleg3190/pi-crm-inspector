@@ -1441,7 +1441,7 @@ async function inspectPage(
 
 export default function (pi: ExtensionAPI) {
   if (process.env[CHILD_GUARD_ENV] !== "1") {
-    throw new Error(\`${TOOL_NAME} is child-only and may only be loaded by the CRM dispatcher.\`);
+    throw new Error(`${TOOL_NAME} is child-only and may only be loaded by the CRM dispatcher.`);
   }
 
   let invocationUsed = false;
