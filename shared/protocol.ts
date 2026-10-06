@@ -31,6 +31,8 @@ export const ERROR_CODES = [
   "configuration_error",
   "browser_error",
   "child_protocol_error",
+  "authentication_expired",
+  "concurrency_limit",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
