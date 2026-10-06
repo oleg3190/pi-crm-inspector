@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   CRM_POLICY,
@@ -37,11 +35,20 @@ import type {
   InspectTarget,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
+import { NetworkRecorder } from "./diagnostics.ts";
+import {
+  PageIdSchema,
+  InspectActionSchema,
+  InspectAssertionSchema,
+  MAX_INSPECT_ACTIONS,
+  MAX_INSPECT_ASSERTIONS,
+  MAX_ACTION_ASSERTIONS,
+  MAX_WAIT_MS,
+} from "../shared/schema.ts";
 
 const TOOL_NAME = "inspect_crm_page" as const;
 const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
 const LOGIN_URL = new URL(CRM_POLICY.login.url);
-const PageIdSchema = StringEnum(PAGE_IDS, { description: "Fixed CRM page identifier." });
 
 type CaptureBucket = "console" | "pageErrors" | "requestFailures";
 
@@ -95,8 +102,6 @@ const MAX_PAGE_TEXT_CHARS = 65_536;
 const MAX_DOM_SNAPSHOT_CHARS = 65_536;
 const MAX_DOM_NODES = 2_000;
 const MAX_DOM_DEPTH = 12;
-const MAX_INSPECT_ACTIONS = 8;
-const MAX_INSPECT_ASSERTIONS = 8;
 const ALLOWED_PRESS_KEYS = new Set([
   "Enter",
   "Escape",
@@ -113,7 +118,8 @@ const ALLOWED_PRESS_KEYS = new Set([
 ]);
 const DOM_STABILITY_QUIET_MS = 350;
 const DOM_STABILITY_MAX_MS = 3_000;
-const MAX_A11Y_ELEMENTS = 100;
+const MAX_A11Y_ELEMENTS = 40;
+const MAX_A11Y_ELEMENTS_ALL = 100;
 const MAX_SCREENSHOT_BYTES = 1_500_000;
 const DATE_PATTERN = /(?<!\d)(?:\d{2}[.\/-]\d{2}[.\/-]\d{4}|\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2}:\d{2})?(?!\d)/gu;
 
