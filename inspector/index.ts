@@ -35,10 +35,15 @@ import type {
   InspectScopeTarget,
   InspectDiagnostics,
   InspectCheckpoint,
+  InspectGeometry,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 import { NetworkRecorder } from "./diagnostics.ts";
-import { InspectSubagentParametersSchema } from "../shared/schema.ts";
+import {
+  InspectSubagentParametersSchema,
+  MAX_INSPECT_ACTIONS,
+  MAX_INSPECT_ASSERTIONS,
+} from "../shared/schema.ts";
 
 const TOOL_NAME = "inspect_crm_page" as const;
 const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
