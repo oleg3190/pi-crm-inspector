@@ -569,6 +569,21 @@ function actionTarget(action: InspectAction): { target?: InspectTarget; selector
   throw new Error("Click action requires a target or legacy selector");
 }
 
+async function waitForActionCompletion(
+  page: Page,
+  waitFor: InspectWaitFor | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  await waitForDomStability(page, signal);
+  if (!waitFor) return;
+  const timeoutMs = waitFor.timeoutMs ?? CRM_POLICY.limits.operationTimeoutMs;
+  await withTimeout(
+    page.locator(waitFor.selector).waitFor({ state: waitFor.state, timeout: timeoutMs }),
+    timeoutMs,
+    signal,
+  );
+}
+
 async function fillValueLength(locator: Locator): Promise<number> {
   try {
     return (await locator.inputValue()).length;
@@ -1114,7 +1129,8 @@ async function inspectPage(
   let blockReason: BlockReason | undefined;
   let phase: InspectorPhase = "login";
   let collecting = false;
-
+  let authenticationExpired = false;
+  const networkRecorder = new NetworkRecorder();
 
   const securityAbort = new AbortController();
   const signal = combineSignals(externalSignal, securityAbort.signal);
