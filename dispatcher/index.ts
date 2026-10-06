@@ -15,6 +15,7 @@ import {
   type PageId,
 } from "../shared/protocol.ts";
 import { InspectSubagentParametersSchema } from "../shared/schema.ts";
+import { APP_ORIGIN } from "../inspector/policy.ts";
 
 const TOOL_NAME = "crm_inspector_subagent" as const;
 const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
