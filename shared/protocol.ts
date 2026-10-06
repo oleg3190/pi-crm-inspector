@@ -264,6 +264,7 @@ export type InspectBlocked = Omit<
   "networkRequests" | "checkpoints"
 > & {
   status: "blocked";
+  reason: BlockReason;
   networkRequests: InspectNetworkRequest[];
   checkpoints?: InspectCheckpoint[];
   pageText?: string;
