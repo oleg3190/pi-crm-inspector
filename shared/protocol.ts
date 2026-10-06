@@ -593,7 +593,7 @@ export function isInspectResult(value: unknown): value is InspectResult {
   return false;
 }
 
-export function asInspectResultexport function asInspectResult(value: unknown): InspectResult {
+export function asInspectResult(value: unknown): InspectResult {
   if (!isInspectResult(value)) throw new Error("Child returned an invalid inspect_crm_page result");
   return value;
 }
