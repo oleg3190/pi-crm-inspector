@@ -604,7 +604,7 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if(!isPageId(value.pageId) || !isFiniteNonNegativeInteger(value.durationMs)) return false;
   if(requirePageText && (typeof value.pageText!=="string" || value.pageText.length>65_536)) return false;
   if(requirePageText && (typeof value.domSnapshot!=="string" || value.domSnapshot.length>65_536)) return false;
-  if(requirePageText && (!Array.isArray(value.interactions) || value.interactions.length>12 || !value.interactions.every(isInspectInteractionResult))) return false;
+  if(requirePageText && (!Array.isArray(value.interactions) || value.interactions.length>8 || !value.interactions.every(isInspectInteractionResult))) return false;
   if(requirePageText && (!Array.isArray(value.elements) || value.elements.length>100 || !value.elements.every(isInspectElement))) return false;
   if(requirePageText && (!Array.isArray(value.assertions) || value.assertions.length>32 || !value.assertions.every(isInspectAssertionResult))) return false;
   if(requirePageText && typeof value.assertionsPassed!=="boolean") return false;
