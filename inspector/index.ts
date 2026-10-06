@@ -1263,6 +1263,27 @@ async function inspectPage(
     return clipped;
   };
 
+  const buildDiagnosticsSummary = (
+    interactions: readonly InspectInteractionResult[],
+    assertions: readonly InspectAssertionResult[],
+    checkpoints: readonly InspectCheckpoint[],
+  ) => ({
+    actionCount: interactions.length,
+    actionsPassed: interactions.filter((item) => item.ok && item.assertionsPassed !== false).length,
+    assertionCount: assertions.length + interactions.reduce((sum, item) => sum + (item.assertions?.length ?? 0), 0),
+    assertionsPassed:
+      assertions.filter((item) => item.ok).length +
+      interactions.reduce((sum, item) => sum + (item.assertions?.filter((assertion) => assertion.ok).length ?? 0), 0),
+    failedAssertions:
+      assertions.filter((item) => !item.ok).length +
+      interactions.reduce((sum, item) => sum + (item.assertions?.filter((assertion) => !assertion.ok).length ?? 0), 0),
+    networkRequests: networkRecorder.entriesSnapshot.length,
+    failedNetworkRequests: networkRecorder.entriesSnapshot.filter((item) => item.failed || item.error || (item.status !== undefined && item.status >= 400)).length,
+    consoleErrors: consoleEvents.filter((item) => item.type === "error" || item.type === "assert").length,
+    pageErrors: pageErrors.length,
+    checkpoints: checkpoints.length,
+  });
+
   const blockedResult = (reason: BlockReason): InspectBlocked => ({
     status: "blocked",
     traceId,
@@ -1274,6 +1295,7 @@ async function inspectPage(
     requestFailures,
     networkRequests: networkRecorder.entriesSnapshot,
     checkpoints: [],
+    diagnosticsSummary: buildDiagnosticsSummary([], [], []),
     securityEvents,
     droppedEvents: droppedEvents + networkRecorder.dropped,
   });
@@ -1377,6 +1399,7 @@ async function inspectPage(
 
     context.on("requestfailed", (request) => {
       const errorText = request.failure()?.errorText ?? "unknown_failure";
+      if (collecting) networkRecorder.onRequestFailed(request, errorText);
       const clipped = capture(
         "requestFailures",
         `${request.method()} ${sanitizedUrl(request.url())}: ${errorText}`,
@@ -1496,6 +1519,8 @@ async function inspectPage(
       ? await captureViewportScreenshot(mainPage)
       : undefined;
 
+    const checkpoints = interactions.flatMap((interaction) => interaction.checkpoint ? [interaction.checkpoint] : []);
+    const diagnosticsSummary = buildDiagnosticsSummary(interactions, assertionResults, checkpoints);
     const result: InspectSuccess = {
       status: "success",
       traceId,
@@ -1513,7 +1538,8 @@ async function inspectPage(
       pageErrors,
       requestFailures,
       networkRequests: networkRecorder.entriesSnapshot,
-      checkpoints: interactions.flatMap((interaction) => interaction.checkpoint ? [interaction.checkpoint] : []),
+      checkpoints,
+      diagnosticsSummary,
       securityEvents,
       droppedEvents: droppedEvents + networkRecorder.dropped,
     };

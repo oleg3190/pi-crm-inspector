@@ -184,12 +184,26 @@ export type InspectAssertionResult = {
   error?: string;
 };
 
+export type InspectDiagnosticsSummary = {
+  actionCount: number;
+  actionsPassed: number;
+  assertionCount: number;
+  assertionsPassed: number;
+  failedAssertions: number;
+  networkRequests: number;
+  failedNetworkRequests: number;
+  consoleErrors: number;
+  pageErrors: number;
+  checkpoints: number;
+};
+
 export type InspectNetworkRequest = {
   id: string;
   timestamp: string;
   method: string;
   url: string;
   resourceType?: string;
+  responseContentType?: string;
   status?: number;
   statusText?: string;
   durationMs?: number;
@@ -198,6 +212,7 @@ export type InspectNetworkRequest = {
   responseBody?: string;
   responseBodyTruncated?: boolean;
   error?: string;
+  failed?: boolean;
 };
 
 export type InspectElement = {
@@ -255,6 +270,7 @@ export type InspectSuccess = {
   networkRequests: InspectNetworkRequest[];
   securityEvents: SecurityEvent[];
   checkpoints?: InspectCheckpoint[];
+  diagnosticsSummary: InspectDiagnosticsSummary;
   droppedEvents: number;
 };
 
@@ -591,12 +607,14 @@ function isInspectNetworkRequest(value: unknown): value is InspectNetworkRequest
   if(typeof item.id!=="string" || item.id.length===0 || item.id.length>128) return false;
   if(typeof item.timestamp!=="string" || typeof item.method!=="string" || typeof item.url!=="string") return false;
   if(item.resourceType!==undefined && typeof item.resourceType!=="string") return false;
+  if(item.responseContentType!==undefined && typeof item.responseContentType!=="string") return false;
   if(item.status!==undefined && (typeof item.status!=="number" || !Number.isInteger(item.status) || item.status<0 || item.status>999)) return false;
   if(item.statusText!==undefined && typeof item.statusText!=="string") return false;
   if(item.durationMs!==undefined && !isFiniteNonNegativeInteger(item.durationMs)) return false;
   for(const key of ["requestBody","responseBody","error"]){ if(item[key]!==undefined && typeof item[key]!=="string") return false; }
   if(item.requestBodyTruncated!==undefined && typeof item.requestBodyTruncated!=="boolean") return false;
   if(item.responseBodyTruncated!==undefined && typeof item.responseBodyTruncated!=="boolean") return false;
+  if(item.failed!==undefined && typeof item.failed!=="boolean") return false;
   return true;
 }
 
@@ -616,6 +634,12 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if(!Array.isArray(value.networkRequests) || value.networkRequests.length>100 || !value.networkRequests.every(isInspectNetworkRequest)) return false;
   if(value.checkpoints!==undefined && (!Array.isArray(value.checkpoints) || value.checkpoints.length>12)) return false;
   if(!Array.isArray(value.securityEvents) || !value.securityEvents.every(isSecurityEvent)) return false;
+  if(value.diagnosticsSummary!==undefined){
+    const s=value.diagnosticsSummary as Record<string,unknown>;
+    for(const key of ["actionCount","actionsPassed","assertionCount","assertionsPassed","failedAssertions","networkRequests","failedNetworkRequests","consoleErrors","pageErrors","checkpoints"]){
+      if(!isFiniteNonNegativeInteger(s[key])) return false;
+    }
+  }
   if(!isFiniteNonNegativeInteger(value.droppedEvents)) return false;
   return true;
 }
