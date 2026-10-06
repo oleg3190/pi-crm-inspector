@@ -438,7 +438,10 @@ export function isInspectAssertion(value: unknown): value is InspectAssertion {
         if(!item[key] || typeof item[key]!=="object") return false;
         const spec=item[key] as Record<string,unknown>;
         for(const bound of ["min","max","exact"]){
-          if(spec[bound]!==undefined && (typeof spec[bound]!=="number" || !Number.isFinite(spec[bound]))) return false;
+          if(spec[bound]===undefined) continue;
+          if(typeof spec[bound]!=="number" || !Number.isFinite(spec[bound])) return false;
+          if((key==="width" || key==="height") && (spec[bound] < 0 || spec[bound] > 4096)) return false;
+          if((key==="x" || key==="y") && (spec[bound] < -100000 || spec[bound] > 100000)) return false;
         }
       }
       return true;
