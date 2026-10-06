@@ -225,7 +225,7 @@ export type InspectDiagnostics = {
   domSelector?: string;
 };
 
-export type InspectResult
+export type InspectError = {
   status: "error";
   traceId: string;
   pageId?: PageId;
@@ -257,7 +257,12 @@ export type InspectSuccess = {
   droppedEvents: number;
 };
 
-export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "assertions" | "assertionsPassed" | "elements" | "screenshot" | "screenshotSuppressed" | "networkRequests" | "checkpoints"> & {
+export type InspectBlocked = Omit<
+  InspectSuccess,
+  "status" | "pageText" | "domSnapshot" | "interactions" | "assertions" |
+  "assertionsPassed" | "elements" | "screenshot" | "screenshotSuppressed" |
+  "networkRequests" | "checkpoints"
+> & {
   status: "blocked";
   networkRequests: InspectNetworkRequest[];
   checkpoints?: InspectCheckpoint[];
