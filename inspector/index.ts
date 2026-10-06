@@ -1479,7 +1479,9 @@ async function inspectPage(
     if (authenticationExpired) {
       throw new Error("Authentication expired: CRM returned HTTP 401 during the authenticated inspection.");
     }
-    const assertionsPassed = assertionResults.every((assertion) => assertion.ok);
+    const finalAssertionsPassed = assertionResults.every((assertion) => assertion.ok);
+    const localAssertionsPassed = interactions.every((interaction) => interaction.assertionsPassed !== false);
+    const assertionsPassed = finalAssertionsPassed && localAssertionsPassed;
     const elementMode = diagnostics.elementsMode ?? "interactive";
     const maxElements = Math.min(diagnostics.maxElements ?? (elementMode === "all" ? MAX_A11Y_ELEMENTS_ALL : MAX_A11Y_ELEMENTS), MAX_A11Y_ELEMENTS_ALL);
     const elements = await captureAccessibilityElements(mainPage, maxElements, elementMode);
