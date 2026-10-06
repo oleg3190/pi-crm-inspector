@@ -97,6 +97,9 @@ export class NetworkRecorder {
     if (!entry) return;
     entry.status = response.status();
     entry.statusText = response.statusText();
+    const contentType = response.headers()["content-type"];
+    if (contentType) entry.responseContentType = contentType.slice(0, 256);
+    entry.failed = response.status() >= 400;
     const startedAt = this.startedAt.get(request);
     if (startedAt !== undefined) entry.durationMs = Math.max(0, Date.now() - startedAt);
     const body = await readResponseBody(response);
@@ -110,6 +113,7 @@ export class NetworkRecorder {
     const startedAt = this.startedAt.get(request);
     if (startedAt !== undefined) entry.durationMs = Math.max(0, Date.now() - startedAt);
     entry.error = scrubSecrets(errorText || "unknown_failure", []);
+    entry.failed = true;
   }
 
   async flush(): Promise<void> {
