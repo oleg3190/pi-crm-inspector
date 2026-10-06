@@ -4,7 +4,7 @@ import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.t
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
 import { anonymizeTextContent, anonymizeTextSegments } from "../inspector/index.ts";
 import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest, isAllowedDocumentUrl, sanitizedUrl } from "../inspector/security.ts";
-import { buildChildEnv, extractChildToolResult, extractChildToolImages } from "../dispatcher/index.ts";
+import { buildChildEnv, extractChildToolResult, extractChildToolImages, withAccountLock } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
   assert.equal(normalizedOrigin("https://crm.example.internal"), "https://crm.example.internal");
@@ -297,4 +297,34 @@ test("WebSocket is enabled and popup blocking is disabled", async () => {
 
   const index = await import("../inspector/index.ts");
   assert.equal(typeof index.default, "function");
+});
+
+
+test("account-scoped inspector lock serializes concurrent same-account runs", async () => {
+  const original = process.env.PI_CRM_USERNAME;
+  process.env.PI_CRM_USERNAME = "same-account";
+  try {
+    const order = [];
+    let releaseFirst;
+    const first = withAccountLock(async () => {
+      order.push("first-start");
+      await new Promise((resolve) => { releaseFirst = resolve; });
+      order.push("first-end");
+      return "first";
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = withAccountLock(async () => {
+      order.push("second-start");
+      order.push("second-end");
+      return "second";
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(order, ["first-start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.deepEqual(order, ["first-start", "first-end", "second-start", "second-end"]);
+  } finally {
+    if (original === undefined) delete process.env.PI_CRM_USERNAME;
+    else process.env.PI_CRM_USERNAME = original;
+  }
 });
