@@ -375,7 +375,7 @@ function accountLockKey(): string {
   return username.toLowerCase();
 }
 
-async function withAccountLock<T>(fn: () => Promise<T>): Promise<T> {
+export async function withAccountLock<T>(fn: () => Promise<T>): Promise<T> {
   const key = accountLockKey();
   const previous = accountLocks.get(key);
   let release!: () => void;
