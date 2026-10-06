@@ -253,6 +253,7 @@ export type InspectSuccess = {
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
   networkRequests: InspectNetworkRequest[];
+  securityEvents: SecurityEvent[];
   checkpoints?: InspectCheckpoint[];
   droppedEvents: number;
 };
