@@ -178,5 +178,5 @@ test("extended protocol accepts wait, scoped matching, local assertions, and lay
     type: "expectGeometry",
     target: { by: "id", value: "calendar" },
     width: { exact: -1 },
-  }), true);
+  }), false);
 });
