@@ -589,7 +589,7 @@ function isInspectNetworkRequest(value: unknown): value is InspectNetworkRequest
   if(typeof item.id!=="string" || item.id.length===0 || item.id.length>128) return false;
   if(typeof item.timestamp!=="string" || typeof item.method!=="string" || typeof item.url!=="string") return false;
   if(item.resourceType!==undefined && typeof item.resourceType!=="string") return false;
-  if(item.status!==undefined && (!Number.isInteger(item.status) || item.status<0 || item.status>999)) return false;
+  if(item.status!==undefined && (typeof item.status!=="number" || !Number.isInteger(item.status) || item.status<0 || item.status>999)) return false;
   if(item.statusText!==undefined && typeof item.statusText!=="string") return false;
   if(item.durationMs!==undefined && !isFiniteNonNegativeInteger(item.durationMs)) return false;
   for(const key of ["requestBody","responseBody","error"]){ if(item[key]!==undefined && typeof item[key]!=="string") return false; }
