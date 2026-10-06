@@ -72,56 +72,75 @@ export type RequestFailure = {
   truncated?: boolean;
 };
 
+export type InspectTargetMatch = "exact" | "contains";
+export type InspectScopeTarget =
+  | { by: "css"; value: string }
+  | { by: "id"; value: string }
+  | { by: "role"; role: string; name?: string; match?: InspectTargetMatch }
+  | { by: "label"; value: string; match?: InspectTargetMatch }
+  | { by: "placeholder"; value: string; match?: InspectTargetMatch }
+  | { by: "text"; value: string; match?: InspectTargetMatch }
+  | { by: "testId"; value: string };
+
+export type InspectTarget =
+  | { by: "css"; value: string }
+  | { by: "id"; value: string }
+  | { by: "role"; role: string; name?: string; match?: InspectTargetMatch; scope?: InspectScopeTarget }
+  | { by: "label"; value: string; match?: InspectTargetMatch; scope?: InspectScopeTarget }
+  | { by: "placeholder"; value: string; match?: InspectTargetMatch; scope?: InspectScopeTarget }
+  | { by: "text"; value: string; match?: InspectTargetMatch; scope?: InspectScopeTarget }
+  | { by: "testId"; value: string };
+
 export type InspectWaitFor = {
   selector: string;
   state: "visible" | "hidden" | "attached" | "detached";
   timeoutMs?: number;
 };
 
-export type InspectTarget =
-  | { by: "css"; value: string }
-  | { by: "id"; value: string }
-  | { by: "role"; role: string; name?: string }
-  | { by: "label"; value: string }
-  | { by: "placeholder"; value: string }
-  | { by: "text"; value: string }
-  | { by: "testId"; value: string };
+export type InspectGeometry = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible: boolean;
+};
+
+export type InspectAssertion =
+  | { type: "expectText"; target: InspectTarget; text: string; exact?: boolean }
+  | { type: "expectVisible"; target: InspectTarget }
+  | { type: "expectCount"; target: InspectTarget; count: number }
+  | { type: "expectAttribute"; target: InspectTarget; name: string; value?: string; present?: boolean }
+  | { type: "expectUrl"; value: string; mode?: "exact" | "contains" | "startsWith" }
+  | { type: "expectElementState"; target: InspectTarget; state: "visible" | "hidden" | "enabled" | "disabled" | "checked" | "unchecked" | "expanded" | "collapsed" }
+  | { type: "expectStyle"; target: InspectTarget; property: string; value: string; mode?: "exact" | "contains" | "startsWith" }
+  | {
+      type: "expectGeometry";
+      target: InspectTarget;
+      width?: { min?: number; max?: number; exact?: number };
+      height?: { min?: number; max?: number; exact?: number };
+      x?: { min?: number; max?: number };
+      y?: { min?: number; max?: number };
+      visible?: boolean;
+    };
 
 export type InspectAction =
-  | {
-      type: "click";
-      target?: InspectTarget;
-      selector?: string;
-      waitFor?: InspectWaitFor;
-    }
-  | {
-      type: "fill";
-      target: InspectTarget;
-      value: string;
-      sensitive?: boolean;
-      waitFor?: InspectWaitFor;
-    }
-  | {
-      type: "select";
-      target: InspectTarget;
-      option: {
-        value?: string;
-        label?: string;
-      };
-      waitFor?: InspectWaitFor;
-    }
-  | {
-      type: "check";
-      target: InspectTarget;
-      checked: boolean;
-      waitFor?: InspectWaitFor;
-    }
-  | {
-      type: "press";
-      target: InspectTarget;
-      key: string;
-      waitFor?: InspectWaitFor;
-    };
+  | { type: "click"; target?: InspectTarget; selector?: string; waitFor?: InspectWaitFor; assertions?: InspectAssertion[] }
+  | { type: "fill"; target: InspectTarget; value: string; sensitive?: boolean; waitFor?: InspectWaitFor; assertions?: InspectAssertion[] }
+  | { type: "select"; target: InspectTarget; option: { value?: string; label?: string }; waitFor?: InspectWaitFor; assertions?: InspectAssertion[] }
+  | { type: "check"; target: InspectTarget; checked: boolean; waitFor?: InspectWaitFor; assertions?: InspectAssertion[] }
+  | { type: "press"; target: InspectTarget; key: string; waitFor?: InspectWaitFor; assertions?: InspectAssertion[] }
+  | { type: "wait"; durationMs: number; assertions?: InspectAssertion[] };
+
+export type InspectCheckpoint = {
+  actionIndex: number;
+  actionType: InspectAction["type"];
+  pageUrl: string;
+  assertions: InspectAssertionResult[];
+  assertionsPassed: boolean;
+  pageText?: string;
+  domSnapshot?: string;
+  networkRequestIds?: string[];
+};
 
 export type InspectInteractionResult = {
   type: InspectAction["type"];
@@ -134,43 +153,14 @@ export type InspectInteractionResult = {
   valueLength?: number;
   checked?: boolean;
   key?: string;
+  requestedMs?: number;
+  elapsedMs?: number;
   waitFor?: InspectWaitFor;
+  assertions?: InspectAssertionResult[];
+  assertionsPassed?: boolean;
+  checkpoint?: InspectCheckpoint;
   error?: string;
 };
-
-export type InspectAssertion =
-  | {
-      type: "expectText";
-      target: InspectTarget;
-      text: string;
-      exact?: boolean;
-    }
-  | {
-      type: "expectVisible";
-      target: InspectTarget;
-    }
-  | {
-      type: "expectCount";
-      target: InspectTarget;
-      count: number;
-    }
-  | {
-      type: "expectAttribute";
-      target: InspectTarget;
-      name: string;
-      value?: string;
-      present?: boolean;
-    }
-  | {
-      type: "expectUrl";
-      value: string;
-      mode?: "exact" | "contains" | "startsWith";
-    }
-  | {
-      type: "expectElementState";
-      target: InspectTarget;
-      state: "visible" | "hidden" | "enabled" | "disabled" | "checked" | "unchecked" | "expanded" | "collapsed";
-    };
 
 export type InspectAssertionResult = {
   type: InspectAssertion["type"];
@@ -179,25 +169,33 @@ export type InspectAssertionResult = {
   matched?: number;
   actualCount?: number;
   attributePresent?: boolean;
+  actualText?: string;
+  actualUrl?: string;
+  actualValue?: string | null;
+  expectedValue?: string;
+  property?: string;
+  actualStyle?: string;
+  expectedStyle?: string;
+  actualGeometry?: InspectGeometry;
+  expectedGeometry?: Record<string, unknown>;
   state?: "visible" | "hidden" | "enabled" | "disabled" | "checked" | "unchecked" | "expanded" | "collapsed";
   error?: string;
 };
 
-export type InspectElement = {
-  kind: "button" | "link" | "input" | "select" | "textarea" | "checkbox" | "combobox" | "other";
-  selector: string;
-  role?: string;
-  name?: string;
-  visible: boolean;
-  enabled?: boolean;
-  checked?: boolean;
-  expanded?: boolean;
-};
-
-export type InspectScreenshot = {
-  mimeType: "image/png";
-  width: number;
-  height: number;
+export type InspectNetworkRequest = {
+  id: string;
+  timestamp: string;
+  method: string;
+  url: string;
+  resourceType?: string;
+  status?: number;
+  statusText?: string;
+  durationMs?: number;
+  requestBody?: string;
+  requestBodyTruncated?: boolean;
+  responseBody?: string;
+  responseBodyTruncated?: boolean;
+  error?: string;
 };
 
 export type InspectSuccess = {
@@ -216,24 +214,16 @@ export type InspectSuccess = {
   console: ConsoleLog[];
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
-  securityEvents: SecurityEvent[];
+  networkRequests: InspectNetworkRequest[];
+  checkpoints?: InspectCheckpoint[];
   droppedEvents: number;
 };
 
-export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "assertions" | "assertionsPassed" | "elements" | "screenshot" | "screenshotSuppressed"> & {
+export type InspectBlocked = Omit<InspectSuccess, "status" | "pageText" | "domSnapshot" | "interactions" | "assertions" | "assertionsPassed" | "elements" | "screenshot" | "screenshotSuppressed" | "networkRequests" | "checkpoints"> & {
   status: "blocked";
-  reason: BlockReason;
+  networkRequests: InspectNetworkRequest[];
+  checkpoints?: InspectCheckpoint[];
   pageText?: string;
-};
-
-export type InspectError = {
-  status: "error";
-  traceId: string;
-  pageId?: PageId;
-  durationMs: number;
-  code: ErrorCode;
-  message: string;
-  securityEvents: SecurityEvent[];
 };
 
 export type InspectResult = InspectSuccess | InspectBlocked | InspectError;
