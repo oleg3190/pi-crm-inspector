@@ -486,3 +486,23 @@ test("NetworkRecorder captures bounded request/response diagnostics and redacts 
   assert.equal(entry.status, 200);
   assert.equal(typeof entry.durationMs, "number");
 });
+
+
+test("accessibility diagnostics support interactive and all element modes", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+  });
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+  await page.setContent(`
+    <main>
+      <section id="content"><span>Static content</span><button id="go">Go</button></section>
+      <div id="hidden" style="display:none"><button>Hidden</button></div>
+    </main>
+  `);
+  const interactive = await captureAccessibilityElements(page, 40, "interactive");
+  const all = await captureAccessibilityElements(page, 100, "all");
+  assert(interactive.some((item) => item.kind === "button"));
+  assert(all.some((item) => item.kind === "other"));
+  assert(all.length > interactive.length);
+});
