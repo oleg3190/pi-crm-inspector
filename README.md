@@ -16,7 +16,7 @@ The child inspection budget is 120 seconds.
 ## Selectors
 
 Prefer semantic targets: role, label, placeholder, text, testId.
-Text-like targets support match=exact or match=contains.
+Text-like targets support match=exact or match=contains. CSS targets use Playwright CSS grammar, including :visible. role+name, label, placeholder, and text are exact by default; match=contains relaxes the text/name match.
 Repeated controls support a scoped target, for example text=4 scoped to [data-calendar='main']. This is preferred over nth-child selectors.
 
 ## Assertions
