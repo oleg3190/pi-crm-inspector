@@ -1430,6 +1430,7 @@ async function inspectPage(
       code: classifyError(error, externalSignal),
       message: scrubSecrets(error instanceof Error ? error.message : String(error), secrets),
       securityEvents,
+      networkRequests: networkRecorder.entriesSnapshot,
       } satisfies InspectError,
     };
   } finally {
