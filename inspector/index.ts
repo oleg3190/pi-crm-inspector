@@ -901,8 +901,8 @@ export async function runInspectAssertions(
   for (const assertion of assertions) {
     try {
       if (assertion.type === "expectUrl") {
-        const actualUrl = sanitizedUrl(page.url());
-        const expectedUrl = sanitizedUrl(assertion.value);
+        const actualUrl = scrubSecrets(page.url(), [username(), password()].filter(Boolean));
+        const expectedUrl = scrubSecrets(assertion.value, [username(), password()].filter(Boolean));
         const mode = assertion.mode ?? "exact";
         const ok = compareString(actualUrl, expectedUrl, mode);
         results.push({
