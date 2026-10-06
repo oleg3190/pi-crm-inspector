@@ -65,3 +65,27 @@ crm_inspector_subagent(
 2. результат заданных actions;
 3. результат assertions;
 4. только затем — относящиеся к проблеме console/page/request события.
+
+
+### Inspector diagnostics upgrade
+
+The inspector supports first-class waits and per-action checkpoints.
+
+Action rules:
+- wait is a standalone action with durationMs up to 60 seconds.
+- waitFor remains an action property and waits for visible, hidden, attached, or detached.
+- Per-action assertions run immediately after action completion and waitFor.
+- Use semantic selectors with match=exact|contains and scope for repeated calendar/table controls.
+
+Useful diagnostics:
+- expectText.actualText
+- expectUrl.actualUrl
+- expectAttribute.actualValue
+- expectStyle for computed CSS
+- expectGeometry for computed x/y/width/height/visibility
+- authenticated networkRequests for recent HTTP diagnostics
+- checkpoints on assertion failures
+
+Default diagnostics prefer visible interactive elements. Use diagnostics.domSelector to inspect a focused subtree rather than dumping the entire DOM.
+
+When CRM behavior is flaky, prefer one run containing the whole sequence and local assertions instead of splitting the scenario across multiple runs.

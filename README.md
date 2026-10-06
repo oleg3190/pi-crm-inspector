@@ -1,147 +1,62 @@
 [![CI](https://github.com/oleg3190/pi-crm-inspector/actions/workflows/ci.yml/badge.svg)](https://github.com/oleg3190/pi-crm-inspector/actions/workflows/ci.yml)
 
-# pi-crm-inspector v3.1.0
+# pi-crm-inspector
 
-## Architecture
+## Purpose
 
-```text
-MAIN PI
-  |
-  +-- normal tools/extensions remain unchanged
-  |
-  +-- crm_inspector_subagent(page_id)
-          |
-          +-- separate pi process
-          |     +-- --no-extensions + explicit inspector extension
-          |     +-- --no-builtin-tools
-          |     +-- --tools inspect_crm_page
-          |     +-- --no-skills
-          |     +-- --no-prompt-templates
-          |     +-- --no-context-files
-          |     +-- --no-themes
-          |     +-- --no-session
-          |     +-- temporary empty cwd
-          |     +-- explicit child model
-          |
-          +-- inspect_crm_page
-                +-- unrestricted web destinations
-                +-- all HTTP methods allowed
-                +-- WebSocket and popup pages allowed
-                +-- no proxy / QUIC disabled
-                +-- Service Worker / download blocking
-                +-- bounded/scrubbed output
-                +-- no login telemetry collection
-```
+This package runs CRM browser inspection in an isolated child pi process. The child exposes only inspect_crm_page; the parent receives bounded, sanitized, machine-readable diagnostics.
 
-## Requirements
+## Inspector contract
 
-- Node.js `>=22.19.0`.
-- pi `0.85.1` compatible runtime.
-- Playwright `1.62.1`.
-- Chromium installed for Playwright.
+Actions: click, fill, select, check, press, wait.
+wait is a standalone time delay with durationMs up to 60 seconds.
+waitFor remains an action property and waits for visible, hidden, attached, or detached DOM state.
+The child inspection budget is 120 seconds.
 
-## Install
+## Selectors
 
-```bash
-npm install
-npx playwright install chromium
-npm run typecheck
-npm test
-```
+Prefer semantic targets: role, label, placeholder, text, testId.
+Text-like targets support match=exact or match=contains. CSS targets use Playwright CSS grammar, including :visible. role+name, label, placeholder, and text are exact by default; match=contains relaxes the text/name match.
+Repeated controls support a scoped target, for example text=4 scoped to [data-calendar='main']. This is preferred over nth-child selectors.
 
-The package manifest auto-loads only `dispatcher/index.ts`. The inspector extension is never auto-loaded by the main session; it is explicitly loaded only inside the child process.
+## Assertions
 
-Keep the installed package outside any agent-writable workspace.
+Final assertions run after all actions.
+Per-action assertions run immediately after the action's waitFor/DOM-stability phase.
+Supported assertions: expectText, expectVisible, expectCount, expectAttribute, expectUrl, expectElementState, expectStyle, expectGeometry.
+Assertion diagnostics return actualText, actualUrl, actualValue, computed style, and computed geometry where applicable.
 
-## Required environment
+## Failure checkpoints
 
-```bash
-export PI_CRM_USERNAME='...'
-export PI_CRM_PASSWORD='...'
-export PI_CRM_INSPECTOR_MODEL='anthropic/claude-sonnet-4-5'
-```
+diagnostics supports captureAfterEachAction, captureOnAssertionFailure, elementsMode, maxElements, and domSelector.
+An action-local assertion failure automatically captures a checkpoint by default.
 
-`PI_CRM_INSPECTOR_MODEL` is mandatory. The child runs with `--no-extensions`, so provider extensions from the parent session are unavailable. Choose a built-in provider/model that the child can resolve without loading another extension.
+## Network diagnostics
 
-Optional:
+The inspector records the latest 100 authenticated requests with method, sanitized URL, resource type, status, duration, bounded request body, bounded response body, and failure text.
+Request bodies are capped at 8 KiB; response bodies at about 1 KiB.
+Sensitive query parameters, credentials, authorization tokens, cookies, and common secret fields are redacted before the result is emitted. Binary response bodies are not decoded.
 
-```bash
-export PI_BIN='pi'
-export PI_CRM_CHILD_ENV_ALLOWLIST='EXTRA_NON_RUNTIME_ENV_NAME'
-```
+## Output compaction
 
-Unsafe runtime variables such as `NODE_OPTIONS`, `NODE_PATH`, `LD_PRELOAD`, `DYLD_*`, `BASH_ENV`, and `ENV` are rejected from the extra child-environment allowlist.
+Successful inspections default to visible interactive elements only, up to 40.
+diagnostics can switch to all elements and can request a focused DOM subtree.
 
-## Web destinations
+## Authentication and concurrency
 
-URL/origin/path/query allowlists are disabled. The inspector may reach arbitrary web destinations from pages loaded during inspection.
+Inspections using the same CRM username are serialized. Different usernames may run concurrently.
+An authenticated HTTP 401 triggers exactly one fresh child/browser/login retry. A second authentication failure remains a structured failure.
 
-The browser still enforces:
-- WebSockets are enabled.
-- Popup/new-page creation is allowed.
-- All HTTP methods are allowed.
-- Downloads and Service Workers remain blocked.
-- Output remains bounded and secrets are scrubbed.
-
-`inspector/policy.ts` still contains fixed login/page targets selected by `page_id`; those targets choose where an inspection starts, but they no longer restrict subsequent request destinations.
-
-## Bounded UI actions and assertions
-
-The inspector supports up to 8 deterministic UI actions per inspection: `click`, `fill`, `select`, `check`, and allowlisted `press` keys. Actions can wait for a concrete DOM state and then wait for DOM stability.
-
-For pagination and other stateful flows, pass up to 8 post-action assertions. Supported assertions are:
-
-- `expectText`
-- `expectVisible`
-- `expectCount`
-- `expectAttribute`
-- `expectUrl`
-- `expectElementState` (`visible`, `hidden`, `enabled`, `disabled`, `checked`, `unchecked`, `expanded`, `collapsed`)
-
-Example:
-
-```json
-{
-  "actions": [
-    {
-      "type": "click",
-      "target": { "by": "role", "role": "button", "name": "Next" },
-      "waitFor": { "selector": "[data-page=\"2\"]", "state": "visible" }
-    }
-  ],
-  "assertions": [
-    {
-      "type": "expectText",
-      "target": { "by": "id", "value": "page" },
-      "text": "Page 2"
-    },
-    {
-      "type": "expectCount",
-      "target": { "by": "css", "value": "tbody tr" },
-      "count": 25
-    },
-    {
-      "type": "expectElementState",
-      "target": { "by": "role", "role": "button", "name": "Next" },
-      "state": "disabled"
-    }
-  ]
-}
-```
-
-Assertion failures are returned as structured `ok: false` entries and summarized by `assertionsPassed`; assertions never execute JavaScript, regexes, shell commands, or network requests.
 ## Security boundary
 
-This extension isolates the browser capability in a child pi process. It is not an OS/kernel sandbox for the main pi process. In ordinary pi mode, the main agent still has its normal tools. Use an OS/container egress policy if you need a hard guarantee that the main process cannot reach arbitrary networks.
+The browser is a bounded inspection capability, not an OS/kernel sandbox.
+The child environment is explicitly allowlisted; dangerous runtime injection variables are rejected.
+The child model cannot use arbitrary JavaScript, shell commands, cookies, headers, credentials, or network utilities.
 
-## Result transport
+## Development
 
-The parent never trusts child final prose. It parses pi JSON events and extracts the authoritative `tool_execution_end.result.details` payload for `inspect_crm_page`, then validates it against the shared runtime result guard.
+npm install
+npx playwright install chromium
+npm run check
 
-## Hardening details
-
-- Login console/pageerror/requestfailure collection starts only after successful authentication.
-- Browser/context launch races have late cleanup handlers to prevent orphan resources.
-- The child tool returns `terminate: true` so the child does not take another LLM turn after inspection.
-- The child environment is explicitly allowlisted instead of inheriting arbitrary process variables.
-# pi-crm-inspector
+The canonical action/assertion schemas live in shared/schema.ts.

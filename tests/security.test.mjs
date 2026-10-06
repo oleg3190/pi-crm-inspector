@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { PAGE_IDS, isInspectResult, asInspectResult } from "../shared/protocol.ts";
 import { CRM_POLICY, getPageConfig } from "../inspector/policy.ts";
 import { anonymizeTextContent, anonymizeTextSegments } from "../inspector/index.ts";
-import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest, isAllowedDocumentUrl } from "../inspector/security.ts";
-import { buildChildEnv, extractChildToolResult, extractChildToolImages } from "../dispatcher/index.ts";
+import { isAllowedPath, isAllowedQuery, normalizedOrigin, scrubSecrets, validatePathRule, validateQueryPolicy, isAllowedRequest, isAllowedDocumentUrl, sanitizedUrl } from "../inspector/security.ts";
+import { buildChildEnv, extractChildToolResult, extractChildToolImages, withAccountLock } from "../dispatcher/index.ts";
 
 test("fixed origin is strict HTTPS origin", () => {
   assert.equal(normalizedOrigin("https://crm.example.internal"), "https://crm.example.internal");
@@ -60,6 +60,15 @@ test("text anonymization preserves digit count and number-like formatting", () =
   assert.equal(anonymizeTextContent(output), output);
 });
 
+test("sanitizedUrl preserves safe query parameters and redacts sensitive values", () => {
+  const value = sanitizedUrl("https://crm.example.test/api/items?page=2&status=active&token=secret&foo=bar");
+  assert.match(value, /page=2/);
+  assert.match(value, /status=active/);
+  assert.match(value, /foo=bar/);
+  assert.doesNotMatch(value, /secret/);
+  assert.match(value, /token=%5BREDACTED%5D/);
+});
+
 test("secrets are redacted", () => {
   const result = scrubSecrets("password=hunter2 Bearer abc123 https://example.internal/x?token=secret", ["hunter2"]);
   assert(!result.includes("hunter2"));
@@ -101,12 +110,13 @@ test("protocol guard accepts only valid results", () => {
     console: [],
     pageErrors: [],
     requestFailures: [],
+    networkRequests: [],
     securityEvents: [],
     droppedEvents: 0,
   };
   assert.equal(isInspectResult({ status: "success", ...base }), true);
   assert.equal(isInspectResult({ status: "blocked", ...base, reason: "external_redirect" }), true);
-  assert.equal(isInspectResult({ status: "error", traceId: "trace", pageId: "dashboard", durationMs: 1, code: "timeout", message: "x", securityEvents: [] }), true);
+  assert.equal(isInspectResult({ status: "error", traceId: "trace", pageId: "dashboard", durationMs: 1, code: "timeout", message: "x", securityEvents: [], networkRequests: [] }), true);
   assert.equal(
     isInspectResult({ status: "success", ...base, interactions: Array.from({ length: 9 }, (_, index) => ({ type: "click", selector: String(index), ok: true, matched: 1 })) }),
     false,
@@ -287,4 +297,34 @@ test("WebSocket is enabled and popup blocking is disabled", async () => {
 
   const index = await import("../inspector/index.ts");
   assert.equal(typeof index.default, "function");
+});
+
+
+test("account-scoped inspector lock serializes concurrent same-account runs", async () => {
+  const original = process.env.PI_CRM_USERNAME;
+  process.env.PI_CRM_USERNAME = "same-account";
+  try {
+    const order = [];
+    let releaseFirst;
+    const first = withAccountLock(async () => {
+      order.push("first-start");
+      await new Promise((resolve) => { releaseFirst = resolve; });
+      order.push("first-end");
+      return "first";
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = withAccountLock(async () => {
+      order.push("second-start");
+      order.push("second-end");
+      return "second";
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(order, ["first-start"]);
+    releaseFirst();
+    await Promise.all([first, second]);
+    assert.deepEqual(order, ["first-start", "first-end", "second-start", "second-end"]);
+  } finally {
+    if (original === undefined) delete process.env.PI_CRM_USERNAME;
+    else process.env.PI_CRM_USERNAME = original;
+  }
 });

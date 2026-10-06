@@ -365,3 +365,145 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   const screenshot = await captureViewportScreenshot(page);
   assert.equal(screenshot.data.length > 0, true);
 });
+
+
+test("browser inspection supports first-class waits, action-local checkpoints, actual text, and layout assertions", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+  });
+
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+  await page.setContent(`
+    <!doctype html>
+    <html>
+      <body>
+        <button id="filter">Filter</button>
+        <div id="status">All records</div>
+        <section id="calendar" style="width:100%;height:420px">Calendar
+          <div data-calendar="main">
+            <button class="day">4</button>
+            <button class="day">5</button>
+          </div>
+        </section>
+        <section data-calendar="other">
+          <button class="day">4</button>
+        </section>
+        <script>
+          const filter = document.querySelector("#filter");
+          const status = document.querySelector("#status");
+          filter.addEventListener("click", () => {
+            filter.dataset.active = filter.dataset.active !== "true" ? "true" : "false";
+            setTimeout(() => {
+              status.textContent = filter.dataset.active === "true" ? "Filtered records" : "All records";
+            }, 40);
+          });
+        </script>
+      </body>
+    </html>
+  `);
+
+  const signal = new AbortController().signal;
+  const actions = await runInspectActions(page, [
+    {
+      type: "click",
+      target: { by: "id", value: "filter" },
+      waitFor: { selector: "#status", state: "visible", timeoutMs: 2_000 },
+      assertions: [{
+        type: "expectText",
+        target: { by: "id", value: "status" },
+        text: "Filtered",
+      }],
+    },
+    {
+      type: "wait",
+      durationMs: 60,
+      assertions: [{
+        type: "expectText",
+        target: { by: "id", value: "status" },
+        text: "Filtered records",
+      }],
+    },
+    {
+      type: "click",
+      target: { by: "text", value: "4", scope: { by: "css", value: "[data-calendar='main']" } },
+      assertions: [{
+        type: "expectStyle",
+        target: { by: "id", value: "calendar" },
+        property: "width",
+        value: "px",
+        mode: "contains",
+      }, {
+        type: "expectGeometry",
+        target: { by: "id", value: "calendar" },
+        width: { min: 900 },
+        height: { min: 400 },
+        visible: true,
+      }],
+    },
+  ], signal, { captureOnAssertionFailure: true });
+
+  assert.equal(actions.length, 3);
+  assert(actions.every((item) => item.ok), JSON.stringify(actions));
+  assert.equal(actions[0].assertionsPassed, true);
+  assert.equal(actions[0].assertions?.[0].actualText, "Filtered records");
+  assert.equal(actions[0].checkpoint, undefined);
+  assert.equal(actions[2].assertionsPassed, true);
+
+  const selectedMain = await page.locator("[data-calendar='main'] button.day").filter({ hasText: "4" }).count();
+  const selectedOther = await page.locator("[data-calendar='other'] button.day").filter({ hasText: "4" }).count();
+  assert.equal(selectedMain, 1);
+  assert.equal(selectedOther, 1);
+});
+
+test("NetworkRecorder captures bounded request/response diagnostics and redacts secrets", async () => {
+  const { NetworkRecorder } = await import("../inspector/diagnostics.ts");
+  const recorder = new NetworkRecorder();
+  const request = {
+    method: () => "POST",
+    url: () => "https://crm.example.test/api/plan?page=2&token=secret",
+    resourceType: () => "xhr",
+    postData: () => '{"categoryId":"42","token":"super-secret"}',
+  };
+  const response = {
+    request: () => request,
+    status: () => 200,
+    statusText: () => "OK",
+    headers: () => ({ "content-type": "application/json" }),
+    body: async () => Buffer.from('{"items":["one","two"],"token":"response-secret"}', "utf8"),
+  };
+
+  recorder.onRequest(request);
+  recorder.onResponse(response);
+  await recorder.flush();
+
+  assert.equal(recorder.entriesSnapshot.length, 1);
+  const entry = recorder.entriesSnapshot[0];
+  assert.equal(entry.method, "POST");
+  assert.match(entry.url, /page=2/);
+  assert.match(entry.url, /token=%5BREDACTED%5D/);
+  assert.doesNotMatch(entry.requestBody ?? "", /super-secret/);
+  assert.doesNotMatch(entry.responseBody ?? "", /response-secret/);
+  assert.equal(entry.status, 200);
+  assert.equal(typeof entry.durationMs, "number");
+});
+
+
+test("accessibility diagnostics support interactive and all element modes", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+  });
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } });
+  await page.setContent(`
+    <main>
+      <section id="content"><span>Static content</span><button id="go">Go</button></section>
+      <div id="hidden" style="display:none"><button>Hidden</button></div>
+    </main>
+  `);
+  const interactive = await captureAccessibilityElements(page, 40, "interactive");
+  const all = await captureAccessibilityElements(page, 100, "all");
+  assert(interactive.some((item) => item.kind === "button"));
+  assert(all.some((item) => item.kind === "other"));
+  assert(all.length > interactive.length);
+});
