@@ -60,6 +60,16 @@ test("text anonymization preserves digit count and number-like formatting", () =
   assert.equal(anonymizeTextContent(output), output);
 });
 
+test("sanitizedUrl preserves safe query parameters and redacts sensitive values", () => {
+  const { sanitizedUrl } = await import("../inspector/security.ts");
+  const value = sanitizedUrl("https://crm.example.test/api/items?page=2&status=active&token=secret&foo=bar");
+  assert.match(value, /page=2/);
+  assert.match(value, /status=active/);
+  assert.match(value, /foo=bar/);
+  assert.doesNotMatch(value, /secret/);
+  assert.match(value, /token=%5BREDACTED%5D/);
+});
+
 test("secrets are redacted", () => {
   const result = scrubSecrets("password=hunter2 Bearer abc123 https://example.internal/x?token=secret", ["hunter2"]);
   assert(!result.includes("hunter2"));
@@ -101,12 +111,13 @@ test("protocol guard accepts only valid results", () => {
     console: [],
     pageErrors: [],
     requestFailures: [],
+    networkRequests: [],
     securityEvents: [],
     droppedEvents: 0,
   };
   assert.equal(isInspectResult({ status: "success", ...base }), true);
   assert.equal(isInspectResult({ status: "blocked", ...base, reason: "external_redirect" }), true);
-  assert.equal(isInspectResult({ status: "error", traceId: "trace", pageId: "dashboard", durationMs: 1, code: "timeout", message: "x", securityEvents: [] }), true);
+  assert.equal(isInspectResult({ status: "error", traceId: "trace", pageId: "dashboard", durationMs: 1, code: "timeout", message: "x", securityEvents: [], networkRequests: [] }), true);
   assert.equal(
     isInspectResult({ status: "success", ...base, interactions: Array.from({ length: 9 }, (_, index) => ({ type: "click", selector: String(index), ok: true, matched: 1 })) }),
     false,
