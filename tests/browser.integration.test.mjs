@@ -507,3 +507,14 @@ test("accessibility diagnostics support interactive and all element modes", asyn
   assert(all.some((item) => item.kind === "other"));
   assert(all.length > interactive.length);
 });
+
+
+test("NetworkRecorder marks failed requests for AI diagnostics", async () => {
+  const { NetworkRecorder } = await import("../inspector/diagnostics.ts");
+  const recorder = new NetworkRecorder();
+  const request = { method: () => "GET", url: () => "https://crm.example.test/api/fail", resourceType: () => "xhr", postData: () => null };
+  recorder.onRequest(request);
+  recorder.onRequestFailed(request, "net::ERR_CONNECTION_RESET");
+  assert.equal(recorder.entriesSnapshot[0].failed, true);
+  assert.equal(recorder.entriesSnapshot[0].error, "net::ERR_CONNECTION_RESET");
+});
