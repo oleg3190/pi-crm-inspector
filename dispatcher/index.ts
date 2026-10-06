@@ -422,27 +422,6 @@ async function runChildWithAuthRetry(
   throw new Error(`CRM authentication expired after one retry (trace=${lastExecution?.invocationTraceId ?? "unknown"})`);
 }
 
-const accountLocks = new Map<string, Promise<void>>();
-
-function accountLockKey(): string {
-  const username = process.env.PI_CRM_USERNAME?.trim();
-  return username ? username.toLowerCase() : "<missing-username>";
-}
-
-async function withAccountLock<T>(fn: () => Promise<T>): Promise<T> {
-  const key = accountLockKey();
-  const previous = accountLocks.get(key);
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => { release = resolve; });
-  accountLocks.set(key, current);
-  if (previous) await previous;
-  try {
-    return await fn();
-  } finally {
-    release();
-    if (accountLocks.get(key) === current) accountLocks.delete(key);
-  }
-}
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
