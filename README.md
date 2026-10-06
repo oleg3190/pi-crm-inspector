@@ -60,3 +60,7 @@ npx playwright install chromium
 npm run check
 
 The canonical action/assertion schemas live in shared/schema.ts.
+
+## AI-oriented diagnostics
+
+Successful results include a compact `diagnosticsSummary` with action/assertion counts, failed network requests, console/page errors, and checkpoints. Network entries mark failed responses and expose only a bounded response content type; headers, cookies, and credentials remain excluded.
