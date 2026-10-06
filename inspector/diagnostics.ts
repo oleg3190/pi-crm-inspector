@@ -50,6 +50,7 @@ export class NetworkRecorder {
   private readonly byRequest = new Map<Request, InspectNetworkRequest>();
   private readonly startedAt = new Map<Request, number>();
   private droppedEvents = 0;
+  private readonly pendingResponses = new Set<Promise<void>>();
 
   onRequest(request: Request): void {
     const entry: InspectNetworkRequest = {
@@ -84,7 +85,13 @@ export class NetworkRecorder {
     }
   }
 
-  async onResponse(response: Response): Promise<void> {
+  onResponse(response: Response): void {
+    const pending = this.recordResponse(response);
+    this.pendingResponses.add(pending);
+    void pending.finally(() => this.pendingResponses.delete(pending));
+  }
+
+  private async recordResponse(response: Response): Promise<void> {
     const request = response.request();
     const entry = this.byRequest.get(request);
     if (!entry) return;
@@ -103,6 +110,10 @@ export class NetworkRecorder {
     const startedAt = this.startedAt.get(request);
     if (startedAt !== undefined) entry.durationMs = Math.max(0, Date.now() - startedAt);
     entry.error = scrubSecrets(errorText || "unknown_failure", []);
+  }
+
+  async flush(): Promise<void> {
+    await Promise.allSettled([...this.pendingResponses]);
   }
 
   get entriesSnapshot(): InspectNetworkRequest[] {
