@@ -643,48 +643,108 @@ export function shouldCaptureInspectScreenshot(
   return screenshotRequested && !hasSensitiveInspectAction(actions);
 }
 
+function scrubCheckpointText(value: string): string {
+  const scrubbed = scrubSecrets(value, [username(), password()].filter(Boolean));
+  return scrubbed.length <= MAX_PAGE_TEXT_CHARS
+    ? scrubbed
+    : `${scrubbed.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
+}
+
+async function captureActionCheckpoint(
+  page: Page,
+  actionIndex: number,
+  actionType: InspectAction["type"],
+  assertions: InspectAssertionResult[],
+  assertionsPassed: boolean,
+  diagnostics: InspectDiagnostics,
+): Promise<InspectCheckpoint> {
+  const rawText = await page.locator("body").innerText().catch(() => "");
+  const checkpoint: InspectCheckpoint = {
+    actionIndex,
+    actionType,
+    pageUrl: page.url(),
+    assertions,
+    assertionsPassed,
+  };
+  checkpoint.pageText = scrubCheckpointText(rawText);
+  checkpoint.domSnapshot = await captureDomSnapshot(page, diagnostics.domSelector);
+  return checkpoint;
+}
+
 export async function runInspectActions(
   page: Page,
   actions: readonly InspectAction[],
   signal: AbortSignal,
+  diagnostics: InspectDiagnostics = {},
 ): Promise<InspectInteractionResult[]> {
   if (actions.length > MAX_INSPECT_ACTIONS) {
     throw new Error(`Too many inspect actions; maximum is ${MAX_INSPECT_ACTIONS}`);
   }
 
   const results: InspectInteractionResult[] = [];
+  const captureAfterEachAction = diagnostics.captureAfterEachAction === true;
+  const captureOnAssertionFailure = diagnostics.captureOnAssertionFailure !== false;
 
-  for (const action of actions) {
+  for (let actionIndex = 0; actionIndex < actions.length; actionIndex++) {
+    const action = actions[actionIndex]!;
     let target: InspectTarget | undefined;
     let selector: string | undefined;
+
+    if (action.type === "wait") {
+      const startedAt = Date.now();
+      try {
+        await withTimeout(
+          new Promise<void>((resolve) => setTimeout(resolve, action.durationMs)),
+          action.durationMs + 250,
+          signal,
+        );
+        await waitForDomStability(page, signal);
+
+        const localAssertions = action.assertions?.length
+          ? await runInspectAssertions(page, action.assertions, signal)
+          : [];
+        const assertionsPassed = localAssertions.every((assertion) => assertion.ok);
+        const shouldCapture = captureAfterEachAction || (captureOnAssertionFailure && !assertionsPassed && localAssertions.length > 0);
+
+        const result: InspectInteractionResult = {
+          type: "wait",
+          ok: true,
+          matched: 0,
+          url: page.url(),
+          requestedMs: action.durationMs,
+          elapsedMs: Date.now() - startedAt,
+          ...(localAssertions.length ? { assertions: localAssertions, assertionsPassed } : {}),
+        };
+        if (shouldCapture) {
+          result.checkpoint = await captureActionCheckpoint(page, actionIndex, "wait", localAssertions, assertionsPassed, diagnostics);
+        }
+        results.push(result);
+      } catch (error) {
+        results.push({
+          type: "wait",
+          ok: false,
+          matched: 0,
+          url: page.url(),
+          requestedMs: action.durationMs,
+          elapsedMs: Date.now() - startedAt,
+          error: scrubSecrets(error instanceof Error ? error.message : String(error), [username(), password()].filter(Boolean)),
+        });
+      }
+      continue;
+    }
+
     try {
       ({ target, selector } = actionTarget(action));
+      if (!target) throw new Error("Action target is missing");
       const locator = resolveInspectTarget(page, target);
       const matched = await locator.count();
 
       if (matched === 0) {
-        results.push({
-          type: action.type,
-          target,
-          ...(selector ? { selector } : {}),
-          ok: false,
-          matched,
-          url: page.url(),
-          error: "Target matched no elements",
-        });
+        results.push({ type: action.type, target, ...(selector ? { selector } : {}), ok: false, matched, url: page.url(), error: "Target matched no elements" });
         continue;
       }
-
       if (matched !== 1) {
-        results.push({
-          type: action.type,
-          target,
-          ...(selector ? { selector } : {}),
-          ok: false,
-          matched,
-          url: page.url(),
-          error: "Target matched multiple elements",
-        });
+        results.push({ type: action.type, target, ...(selector ? { selector } : {}), ok: false, matched, url: page.url(), error: "Target matched multiple elements" });
         continue;
       }
 
@@ -703,9 +763,8 @@ export async function runInspectActions(
           break;
         case "select": {
           const tagName = await locator.evaluate((element) => element.tagName);
-          if (tagName === "SELECT") {
-            changed = await selectNativeOption(locator, action.option);
-          } else if ((await locator.getAttribute("role")) === "combobox" || action.target.by === "role" && action.target.role === "combobox") {
+          if (tagName === "SELECT") changed = await selectNativeOption(locator, action.option);
+          else if ((await locator.getAttribute("role")) === "combobox" || (action.target.by === "role" && action.target.role === "combobox")) {
             changed = await selectCustomCombobox(page, locator, action.option, signal);
           } else {
             throw new Error("Select target must be a native <select> or role=combobox");
@@ -718,14 +777,19 @@ export async function runInspectActions(
           changed = beforeChecked !== action.checked;
           break;
         case "press":
-          if (!ALLOWED_PRESS_KEYS.has(action.key)) throw new Error("Unsupported press key");
           await locator.press(action.key, { timeout: CRM_POLICY.limits.operationTimeoutMs });
           break;
       }
 
       await waitForActionCompletion(page, action.waitFor, signal);
 
-      results.push({
+      const localAssertions = action.assertions?.length
+        ? await runInspectAssertions(page, action.assertions, signal)
+        : [];
+      const assertionsPassed = localAssertions.every((assertion) => assertion.ok);
+      const shouldCapture = captureAfterEachAction || (captureOnAssertionFailure && !assertionsPassed && localAssertions.length > 0);
+
+      const result: InspectInteractionResult = {
         type: action.type,
         target,
         ...(selector ? { selector } : {}),
@@ -737,7 +801,12 @@ export async function runInspectActions(
         ...(action.type === "check" ? { checked: action.checked } : {}),
         ...(action.type === "press" ? { key: action.key } : {}),
         ...(action.waitFor ? { waitFor: action.waitFor } : {}),
-      });
+        ...(localAssertions.length ? { assertions: localAssertions, assertionsPassed } : {}),
+      };
+      if (shouldCapture) {
+        result.checkpoint = await captureActionCheckpoint(page, actionIndex, action.type, localAssertions, assertionsPassed, diagnostics);
+      }
+      results.push(result);
     } catch (error) {
       results.push({
         type: action.type,
@@ -747,7 +816,7 @@ export async function runInspectActions(
         matched: 0,
         url: page.url(),
         ...(action.type === "press" ? { key: action.key } : {}),
-        error: scrubSecrets(error instanceof Error ? error.message : String(error), []),
+        error: scrubSecrets(error instanceof Error ? error.message : String(error), [username(), password()].filter(Boolean)),
       });
     }
   }
