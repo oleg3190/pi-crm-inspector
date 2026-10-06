@@ -680,6 +680,33 @@ async function captureActionCheckpoint(
   return checkpoint;
 }
 
+function scrubCheckpointText(value: string): string {
+  const scrubbed = scrubSecrets(value, [username(), password()].filter(Boolean));
+  return scrubbed.length <= MAX_PAGE_TEXT_CHARS
+    ? scrubbed
+    : `${scrubbed.slice(0, MAX_PAGE_TEXT_CHARS - 12)}\\n[truncated]`;
+}
+
+async function captureActionCheckpoint(
+  page: Page,
+  actionIndex: number,
+  actionType: InspectAction["type"],
+  assertions: InspectAssertionResult[],
+  assertionsPassed: boolean,
+  diagnostics: InspectDiagnostics,
+): Promise<InspectCheckpoint> {
+  const rawText = await page.locator("body").innerText().catch(() => "");
+  return {
+    actionIndex,
+    actionType,
+    pageUrl: sanitizedUrl(page.url()),
+    assertions,
+    assertionsPassed,
+    pageText: scrubCheckpointText(rawText),
+    domSnapshot: await captureDomSnapshot(page, diagnostics.domSelector ?? "body"),
+  };
+}
+
 export async function runInspectActions(
   page: Page,
   actions: readonly InspectAction[],
@@ -696,8 +723,6 @@ export async function runInspectActions(
 
   for (let actionIndex = 0; actionIndex < actions.length; actionIndex++) {
     const action = actions[actionIndex]!;
-    let target: InspectTarget | undefined;
-    let selector: string | undefined;
 
     if (action.type === "wait") {
       const startedAt = Date.now();
@@ -708,18 +733,17 @@ export async function runInspectActions(
           signal,
         );
         await waitForDomStability(page, signal);
-
         const localAssertions = action.assertions?.length
           ? await runInspectAssertions(page, action.assertions, signal)
           : [];
-        const assertionsPassed = localAssertions.every((assertion) => assertion.ok);
-        const shouldCapture = captureAfterEachAction || (captureOnAssertionFailure && !assertionsPassed && localAssertions.length > 0);
-
+        const assertionsPassed = localAssertions.every((item) => item.ok);
+        const shouldCapture = captureAfterEachAction ||
+          (captureOnAssertionFailure && localAssertions.length > 0 && !assertionsPassed);
         const result: InspectInteractionResult = {
           type: "wait",
           ok: true,
           matched: 0,
-          url: page.url(),
+          url: sanitizedUrl(page.url()),
           requestedMs: action.durationMs,
           elapsedMs: Date.now() - startedAt,
           ...(localAssertions.length ? { assertions: localAssertions, assertionsPassed } : {}),
@@ -733,7 +757,7 @@ export async function runInspectActions(
           type: "wait",
           ok: false,
           matched: 0,
-          url: page.url(),
+          url: sanitizedUrl(page.url()),
           requestedMs: action.durationMs,
           elapsedMs: Date.now() - startedAt,
           error: scrubSecrets(error instanceof Error ? error.message : String(error), [username(), password()].filter(Boolean)),
@@ -742,6 +766,8 @@ export async function runInspectActions(
       continue;
     }
 
+    let target: InspectTarget | undefined;
+    let selector: string | undefined;
     try {
       ({ target, selector } = actionTarget(action));
       if (!target) throw new Error("Action target is missing");
@@ -749,11 +775,27 @@ export async function runInspectActions(
       const matched = await locator.count();
 
       if (matched === 0) {
-        results.push({ type: action.type, target, ...(selector ? { selector } : {}), ok: false, matched, url: page.url(), error: "Target matched no elements" });
+        results.push({
+          type: action.type,
+          target,
+          ...(selector ? { selector } : {}),
+          ok: false,
+          matched,
+          url: sanitizedUrl(page.url()),
+          error: "Target matched no elements",
+        });
         continue;
       }
       if (matched !== 1) {
-        results.push({ type: action.type, target, ...(selector ? { selector } : {}), ok: false, matched, url: page.url(), error: "Target matched multiple elements" });
+        results.push({
+          type: action.type,
+          target,
+          ...(selector ? { selector } : {}),
+          ok: false,
+          matched,
+          url: sanitizedUrl(page.url()),
+          error: "Target matched multiple elements",
+        });
         continue;
       }
 
@@ -772,8 +814,9 @@ export async function runInspectActions(
           break;
         case "select": {
           const tagName = await locator.evaluate((element) => element.tagName);
-          if (tagName === "SELECT") changed = await selectNativeOption(locator, action.option);
-          else if ((await locator.getAttribute("role")) === "combobox" || (action.target.by === "role" && action.target.role === "combobox")) {
+          if (tagName === "SELECT") {
+            changed = await selectNativeOption(locator, action.option);
+          } else if ((await locator.getAttribute("role")) === "combobox" || (action.target.by === "role" && action.target.role === "combobox")) {
             changed = await selectCustomCombobox(page, locator, action.option, signal);
           } else {
             throw new Error("Select target must be a native <select> or role=combobox");
@@ -795,16 +838,16 @@ export async function runInspectActions(
       const localAssertions = action.assertions?.length
         ? await runInspectAssertions(page, action.assertions, signal)
         : [];
-      const assertionsPassed = localAssertions.every((assertion) => assertion.ok);
-      const shouldCapture = captureAfterEachAction || (captureOnAssertionFailure && !assertionsPassed && localAssertions.length > 0);
-
+      const assertionsPassed = localAssertions.every((item) => item.ok);
+      const shouldCapture = captureAfterEachAction ||
+        (captureOnAssertionFailure && localAssertions.length > 0 && !assertionsPassed);
       const result: InspectInteractionResult = {
         type: action.type,
         target,
         ...(selector ? { selector } : {}),
         ok: true,
         matched,
-        url: page.url(),
+        url: sanitizedUrl(page.url()),
         ...(changed !== undefined ? { changed } : {}),
         ...(valueLength !== undefined ? { valueLength } : {}),
         ...(action.type === "check" ? { checked: action.checked } : {}),
@@ -823,23 +866,20 @@ export async function runInspectActions(
         ...(selector ? { selector } : {}),
         ok: false,
         matched: 0,
-        url: page.url(),
+        url: sanitizedUrl(page.url()),
         ...(action.type === "press" ? { key: action.key } : {}),
         error: scrubSecrets(error instanceof Error ? error.message : String(error), [username(), password()].filter(Boolean)),
       });
     }
   }
-
   return results;
 }
 
 function compareString(actual: string, expected: string, mode: "exact" | "contains" | "startsWith"): boolean {
-  if (mode === "exact") return actual === expected;
-  if (mode === "contains") return actual.includes(expected);
-  return actual.startsWith(expected);
+  return mode === "exact" ? actual === expected : mode === "contains" ? actual.includes(expected) : actual.startsWith(expected);
 }
 
-function expectedGeometryFromAssertion(assertion: Extract<InspectAssertion, { type: "expectGeometry" }>): Record<string, unknown> {
+function readGeometryExpectation(assertion: Extract<InspectAssertion, { type: "expectGeometry" }>): Record<string, unknown> {
   return {
     ...(assertion.width ? { width: assertion.width } : {}),
     ...(assertion.height ? { height: assertion.height } : {}),
@@ -863,7 +903,7 @@ async function readGeometry(locator: Locator): Promise<InspectGeometry> {
   });
 }
 
-function checkBound(value: number, spec: { min?: number; max?: number; exact?: number } | undefined): boolean {
+function satisfiesBounds(value: number, spec: { min?: number; max?: number; exact?: number } | undefined): boolean {
   if (!spec) return true;
   if (spec.exact !== undefined && Math.abs(value - spec.exact) > 0.5) return false;
   if (spec.min !== undefined && value < spec.min) return false;
@@ -874,26 +914,26 @@ function checkBound(value: number, spec: { min?: number; max?: number; exact?: n
 export async function runInspectAssertions(
   page: Page,
   assertions: readonly InspectAssertion[],
-  signal: AbortSignal,
+  _signal: AbortSignal,
 ): Promise<InspectAssertionResult[]> {
   if (assertions.length > MAX_INSPECT_ASSERTIONS) {
     throw new Error(`Too many inspect assertions; maximum is ${MAX_INSPECT_ASSERTIONS}`);
   }
 
   const results: InspectAssertionResult[] = [];
-
   for (const assertion of assertions) {
     try {
       if (assertion.type === "expectUrl") {
         const actualUrl = sanitizedUrl(page.url());
+        const expectedUrl = sanitizedUrl(assertion.value);
         const mode = assertion.mode ?? "exact";
-        const ok = compareString(actualUrl, sanitizedUrl(assertion.value), mode);
+        const ok = compareString(actualUrl, expectedUrl, mode);
         results.push({
           type: assertion.type,
           ok,
           actualUrl,
-          expectedValue: assertion.value,
-          error: ok ? undefined : `URL assertion failed: expected ${mode} ${assertion.value}`,
+          expectedValue: expectedUrl,
+          error: ok ? undefined : `URL assertion failed: expected ${mode} ${expectedUrl}`,
         });
         continue;
       }
@@ -948,8 +988,7 @@ export async function runInspectAssertions(
           const actual = await locator.getAttribute(assertion.name);
           const safeActual = actual === null ? null : scrubSecrets(actual, [username(), password()].filter(Boolean));
           const present = actual !== null;
-          const ok = (assertion.present === undefined || present === assertion.present) &&
-            (assertion.value === undefined || actual === assertion.value);
+          const ok = (assertion.present === undefined || present === assertion.present) && (assertion.value === undefined || actual === assertion.value);
           results.push({
             type: assertion.type,
             target: assertion.target,
@@ -966,13 +1005,13 @@ export async function runInspectAssertions(
           let ok: boolean;
           switch (assertion.state) {
             case "visible": ok = await locator.isVisible(); break;
-            case "hidden": ok = !(await locator.isVisible()); break;
+            case "hidden": ok = !await locator.isVisible(); break;
             case "enabled": ok = await locator.isEnabled(); break;
-            case "disabled": ok = !(await locator.isEnabled()); break;
+            case "disabled": ok = !await locator.isEnabled(); break;
             case "checked": ok = await locator.isChecked(); break;
-            case "unchecked": ok = !(await locator.isChecked()); break;
-            case "expanded": ok = (await locator.getAttribute("aria-expanded")) === "true"; break;
-            case "collapsed": ok = (await locator.getAttribute("aria-expanded")) === "false"; break;
+            case "unchecked": ok = !await locator.isChecked(); break;
+            case "expanded": ok = await locator.getAttribute("aria-expanded") === "true"; break;
+            case "collapsed": ok = await locator.getAttribute("aria-expanded") === "false"; break;
           }
           results.push({
             type: assertion.type,
@@ -985,35 +1024,36 @@ export async function runInspectAssertions(
           break;
         }
         case "expectStyle": {
-          const actualStyle = await locator.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), assertion.property);
+          const actualStyle = (await locator.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), assertion.property)).trim();
           const mode = assertion.mode ?? "exact";
-          const ok = compareString(actualStyle.trim(), assertion.value, mode);
+          const ok = compareString(actualStyle, assertion.value, mode);
           results.push({
             type: assertion.type,
             target: assertion.target,
             ok,
             matched,
             property: assertion.property,
-            actualStyle: actualStyle.trim(),
+            actualStyle,
             expectedStyle: assertion.value,
+            expectedValue: assertion.value,
             error: ok ? undefined : `Style assertion failed for ${assertion.property}`,
           });
           break;
         }
         case "expectGeometry": {
           const actualGeometry = await readGeometry(locator);
-          const ok = checkBound(actualGeometry.width, assertion.width)
-            && checkBound(actualGeometry.height, assertion.height)
-            && checkBound(actualGeometry.x, assertion.x)
-            && checkBound(actualGeometry.y, assertion.y)
-            && (assertion.visible === undefined || actualGeometry.visible === assertion.visible);
+          const ok = satisfiesBounds(actualGeometry.width, assertion.width) &&
+            satisfiesBounds(actualGeometry.height, assertion.height) &&
+            satisfiesBounds(actualGeometry.x, assertion.x) &&
+            satisfiesBounds(actualGeometry.y, assertion.y) &&
+            (assertion.visible === undefined || assertion.visible === actualGeometry.visible);
           results.push({
             type: assertion.type,
             target: assertion.target,
             ok,
             matched,
             actualGeometry,
-            expectedGeometry: expectedGeometryFromAssertion(assertion),
+            expectedGeometry: readGeometryExpectation(assertion),
             error: ok ? undefined : "Geometry assertion failed",
           });
           break;
@@ -1028,11 +1068,64 @@ export async function runInspectAssertions(
       });
     }
   }
-
   return results;
 }
 
-export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
+export async function sanitizePageForScreenshot(page: Page): Promise<void> {
+  await page.locator("body").evaluate((root) => {
+    const replacement = "ipsum";
+    const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
+
+    const anonymizeText = (value: string): string =>
+      value.replace(/\d/gu, "7").replace(/[\p{L}\p{M}]+/gu, replacement);
+
+    const sanitizeRoot = (container: Document | DocumentFragment | Element): void => {
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const textNodes: Text[] = [];
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        const parent = node.parentElement;
+        if (!parent || ignoredTags.has(parent.tagName)) continue;
+        if (node.nodeValue) textNodes.push(node as Text);
+      }
+
+      for (const textNode of textNodes) {
+        textNode.nodeValue = anonymizeText(textNode.nodeValue ?? "");
+      }
+
+      const elements = container instanceof Element
+        ? [container, ...Array.from(container.querySelectorAll("*"))]
+        : Array.from(container.querySelectorAll("*"));
+
+      for (const element of elements) {
+        if (ignoredTags.has(element.tagName)) continue;
+
+        const tag = element.tagName.toLowerCase();
+        const formControl = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+        if ("value" in formControl && typeof formControl.value === "string") {
+          try {
+            formControl.value = anonymizeText(formControl.value);
+          } catch {
+            // Some controls expose read-only values; attributes/styles are still sanitized below.
+          }
+        }
+
+        for (const attribute of ["aria-label", "placeholder", "title", "alt"]) {
+          if (element.hasAttribute(attribute)) {
+            element.setAttribute(attribute, anonymizeText(element.getAttribute(attribute) ?? ""));
+          }
+        }
+
+        if (element.hasAttribute("value") && /^(input|textarea)$/u.test(tag)) {
+          element.setAttribute("value", anonymizeText(element.getAttribute("value") ?? ""));
+        }
+
+        if (tag.includes("-")) {
+          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
+        }
+
+        if (["IMG", "PICTURE", "CANVAS", "SVG", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
+          (element as HTMLElement).style.setProperty("visibility", "hidden", "important")export async function captureViewportScreenshot(page: Page): Promise<{ data: string; width: number; height: number }> {
   await sanitizePageForScreenshot(page);
   const image = await page.screenshot({ type: "png", scale: "css", animations: "disabled" });
   if (image.length > MAX_SCREENSHOT_BYTES) {
