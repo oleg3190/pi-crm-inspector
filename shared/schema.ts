@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { PAGE_IDS } from "./protocol.ts";
 
-export const MAX_INSPECT_ACTIONS = 12;
+export const MAX_INSPECT_ACTIONS = 8;
 export const MAX_INSPECT_ASSERTIONS = 8;
 export const MAX_ACTION_ASSERTIONS = 8;
 export const MAX_WAIT_MS = 60_000;
