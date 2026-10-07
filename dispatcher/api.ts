@@ -244,10 +244,7 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   const contentType = response.headers.get("content-type")?.slice(0, 256) || undefined;
   const body = anonymizeResponseBody(rawBody, contentType, secret, input.service);
   const anonymizer = new TypeAnonymizer(secret, input.service);
-  const safeUrl = new URL(url.toString());
-  safeUrl.pathname = anonymizer.anonymize(safeUrl.pathname) as string;
-  safeUrl.search = "";
-  safeUrl.hash = "";
+  const safeUrlValue = anonymizer.anonymize(url.toString()) as string;
   return {
     status: response.status,
     statusText: response.statusText,
