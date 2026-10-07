@@ -64,3 +64,15 @@ The canonical action/assertion schemas live in shared/schema.ts.
 ## AI-oriented diagnostics
 
 Successful results include a compact `diagnosticsSummary` with action/assertion counts, failed network requests, console/page errors, and checkpoints. Network entries mark failed responses and expose only a bounded response content type; headers, cookies, and credentials remain excluded.
+
+## CRM API tool
+
+The main agent can call `crm_api_request` for the configured CRM HTTP API without receiving the API key.
+Configure:
+
+- `PI_CRM_API_BASE_URL` — HTTPS API origin, for example `https://api.example.test`.
+- `PI_CRM_API_KEY` — API key kept in the runtime environment.
+- `PI_CRM_API_KEY_HEADER` — optional header name; defaults to `X-API-Key`.
+
+The agent supplies only a relative path, HTTP method, and optional body. The runtime injects the key into the configured header, rejects cross-origin/absolute paths, uses `redirect: "error"`, and redacts the key from the bounded response returned to the agent. The API key is not passed to the isolated CRM inspector child.
+
