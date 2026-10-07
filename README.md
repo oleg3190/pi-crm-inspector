@@ -78,7 +78,7 @@ Example:
 }
 ```
 
-The agent supplies only `service`, relative `path`, HTTP method, and optional body. The runtime resolves the service, injects API-key or Bearer authentication, rejects cross-origin/absolute paths, uses `redirect: "error"`, bounds the response at 256 KiB, and redacts the selected secret from the response.
+The agent supplies only `service`, relative `path`, HTTP method, and optional body. The runtime resolves the service, injects API-key or Bearer authentication, rejects cross-origin/absolute paths, uses `redirect: "error"`, bounds the response at 256 KiB, and anonymizes the response before it reaches the agent.
 
 ### API response anonymization
 
