@@ -80,3 +80,17 @@ Example:
 
 The agent supplies only `service`, relative `path`, HTTP method, and optional body. The runtime resolves the service, injects API-key or Bearer authentication, rejects cross-origin/absolute paths, uses `redirect: "error"`, bounds the response at 256 KiB, and redacts the selected secret from the response.
 
+### API response anonymization
+
+CRM API responses are anonymized **before they are returned to the agent**. The runtime does not require a list of field names: it recursively walks every JSON value and preserves the response structure and value types while replacing the data.
+
+- object keys and nesting stay unchanged;
+- strings become other strings of the same general shape; emails, phones, UUIDs, URLs, and ISO dates remain valid in their respective formats;
+- integers remain integers, numbers remain numbers, booleans remain booleans, null remains null;
+- arrays keep their length and recursively preserve element types;
+- the same source value maps deterministically to the same replacement for the same configured service, so repeated API calls remain coherent for the agent;
+- plain-text responses are replaced as strings rather than passed through raw;
+- API secrets are scrubbed before anonymization and never appear in the returned body or URL;
+- the anonymization key is derived inside the runtime from the service secret and is never exposed to the agent.
+
+There is intentionally no field allowlist: unknown CRM schemas are anonymized automatically. This is a privacy boundary for agent context, not merely log redaction.
