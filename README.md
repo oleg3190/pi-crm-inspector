@@ -67,12 +67,16 @@ Successful results include a compact `diagnosticsSummary` with action/assertion 
 
 ## CRM API tool
 
-The main agent can call `crm_api_request` for the configured CRM HTTP API without receiving the API key.
-Configure:
+The main agent can call `crm_api_request` for allowlisted CRM services without receiving their API secrets. Configure one JSON service registry in `PI_CRM_API_SERVICES_JSON`; each service has its own HTTPS `baseUrl` and `auth.secretRef`. Secrets themselves stay only in the runtime environment.
 
-- `PI_CRM_API_BASE_URL` — HTTPS API origin, for example `https://api.example.test`.
-- `PI_CRM_API_KEY` — API key kept in the runtime environment.
-- `PI_CRM_API_KEY_HEADER` — optional header name; defaults to `X-API-Key`.
+Example:
 
-The agent supplies only a relative path, HTTP method, and optional body. The runtime injects the key into the configured header, rejects cross-origin/absolute paths, uses `redirect: "error"`, and redacts the key from the bounded response returned to the agent. The API key is not passed to the isolated CRM inspector child.
+```json
+{
+  "customers": { "baseUrl": "https://customers.example.test", "auth": { "type": "apiKey", "header": "X-API-Key", "secretRef": "CUSTOMERS_API_KEY" } },
+  "orders": { "baseUrl": "https://orders.example.test", "auth": { "type": "bearer", "secretRef": "ORDERS_API_TOKEN" } }
+}
+```
+
+The agent supplies only `service`, relative `path`, HTTP method, and optional body. The runtime resolves the service, injects API-key or Bearer authentication, rejects cross-origin/absolute paths, uses `redirect: "error"`, bounds the response at 256 KiB, and redacts the selected secret from the response.
 
