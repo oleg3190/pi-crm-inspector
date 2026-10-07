@@ -78,7 +78,7 @@ Example:
 }
 ```
 
-The agent supplies only `service`, relative `path`, HTTP method, and optional body. The runtime resolves the service, injects API-key or Bearer authentication, rejects cross-origin/absolute paths, uses `redirect: "error"`, bounds the response at 256 KiB, and anonymizes the response before it reaches the agent.
+The agent supplies only `service`, relative `path`, HTTP method, and optional body. The runtime resolves the service, injects API-key or Bearer authentication, rejects cross-origin/absolute paths, uses `redirect: "error"`, bounds the response at 256 KiB, and anonymizes the response before it reaches the agent. Request bodies are sent to the CRM **verbatim** and are never anonymized by the API runtime; callers are responsible for supplying the intended request payload.\n\nOperational URLs in anonymized API responses are represented by short-lived, session-local opaque URL tokens (`https://example.invalid/__pi_crm_url/<token>`). When the agent reuses such a token as the next API path, the runtime resolves it back to the original URL and still enforces the configured service origin. This prevents anonymization from turning pagination, links, or follow-up GETs into 404s without exposing the real URL to the agent.
 
 ### API response anonymization
 
