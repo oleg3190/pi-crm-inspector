@@ -96,14 +96,16 @@ function resolveService(service: string): { config: ServiceConfig; secret: strin
 }
 
 function configuredApiUrl(service: string, path: string, config: ServiceConfig): URL {
-  const tokenMatch = path.match(/^(?:https:\/\/example\\.invalid)?\/__pi_crm_url\/([a-f0-9]{32})$/i);
+  let baseUrl: URL;
+  try { baseUrl = new URL(config.baseUrl); } catch { throw new Error(`CRM service '${service}' has an invalid base URL`); }
+  const tokenMatch = path.match(/^(?:https:\/\/example\.invalid)?\/__pi_crm_url\/([a-f0-9]{32})$/i);
   if (tokenMatch) {
     const resolved = apiUrlTokens.get(service, tokenMatch[1]);
     if (!resolved) throw new Error("Unknown or expired anonymized API URL");
-    path = resolved;
+    const resolvedUrl = new URL(resolved);
+    if (resolvedUrl.origin !== baseUrl.origin) throw new Error("Anonymized API URL must stay on the configured service origin");
+    return resolvedUrl;
   }
-  let baseUrl: URL;
-  try { baseUrl = new URL(config.baseUrl); } catch { throw new Error(`CRM service '${service}' has an invalid base URL`); }
   if (!path.startsWith("/") || path.startsWith("//")) throw new Error("API path must be relative and start with /");
   const url = new URL(path, baseUrl);
   if (url.origin !== baseUrl.origin) throw new Error("API path must stay on the configured service origin");
