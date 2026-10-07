@@ -196,7 +196,7 @@ class TypeAnonymizer {
     if (Array.isArray(value)) return value.map((item) => this.anonymize(item));
     if (typeof value === "object") {
       const result: Record<string, unknown> = {};
-      for (const [key, item] of Object.entries(value as Record<string, unknown>)) result[key] = this.anonymize(item);
+      for (const [key, item] of Object.entries(value as Record<string, unknown>)) {\n        // Preserve identifier fields exactly, including id, customerId, order_id, ids, etc.\n        result[key] = /id/i.test(key) ? item : this.anonymize(item);\n      }
       return result;
     }
     return this.string(String(value));
