@@ -25,12 +25,51 @@ test("API request injects a service secret but never returns it", async () => {
   };
   try {
     const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
-    assert.match(result.url, /^https:\/\/customers\.example\.test\/[A-Za-z0-9]+$/);
+    assert.match(result.url, /^https:\/\/example\.invalid\/__pi_crm_url\/[a-f0-9]{32}$/);
     assert.doesNotMatch(result.url, /v1\/customers/);
     assert.equal(result.anonymized, true);
     assert.doesNotMatch(result.body, /customers-secret/);
     assert.equal(JSON.parse(result.body).echoed !== "customers-secret", true);
     assert.equal(seen.headers["X-API-Key"], "customers-secret");
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API request body is sent verbatim and is never anonymized", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  let seenBody;
+  globalThis.fetch = async (_input, init) => {
+    seenBody = init.body;
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const requestBody = JSON.stringify({ customerId: "real-customer-id", email: "real@example.com" });
+    await executeApiRequest({ service: "customers", method: "POST", path: "/v1/customers/search", body: requestBody });
+    assert.equal(seenBody, requestBody);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("anonymized API URLs remain executable through the URL token", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const seenUrls = [];
+  globalThis.fetch = async (input) => {
+    seenUrls.push(String(input));
+    return new Response(JSON.stringify({ next: "https://customers.example.test/v1/customers?page=2" }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const first = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
+    const tokenUrl = JSON.parse(first.body).next;
+    const tokenPath = new URL(tokenUrl).pathname;
+    await executeApiRequest({ service: "customers", method: "GET", path: tokenPath });
+    assert.equal(seenUrls[0], "https://customers.example.test/v1/customers");
+    assert.equal(seenUrls[1], "https://customers.example.test/v1/customers?page=2");
   } finally {
     globalThis.fetch = oldFetch;
     restore.reverse().forEach((fn) => fn());
