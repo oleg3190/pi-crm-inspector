@@ -95,7 +95,13 @@ function resolveService(service: string): { config: ServiceConfig; secret: strin
   return { config, secret };
 }
 
-function configuredApiUrl(service: string, path: string, config: ServiceConfig): URL {\n  const tokenMatch = path.match(/^(?:https:\/\/example\\.invalid)?\/__pi_crm_url\/([a-f0-9]{32})$/i);\n  if (tokenMatch) {\n    const resolved = apiUrlTokens.get(service, tokenMatch[1]);\n    if (!resolved) throw new Error("Unknown or expired anonymized API URL");\n    path = resolved;\n  }
+function configuredApiUrl(service: string, path: string, config: ServiceConfig): URL {
+  const tokenMatch = path.match(/^(?:https:\/\/example\\.invalid)?\/__pi_crm_url\/([a-f0-9]{32})$/i);
+  if (tokenMatch) {
+    const resolved = apiUrlTokens.get(service, tokenMatch[1]);
+    if (!resolved) throw new Error("Unknown or expired anonymized API URL");
+    path = resolved;
+  }
   let baseUrl: URL;
   try { baseUrl = new URL(config.baseUrl); } catch { throw new Error(`CRM service '${service}' has an invalid base URL`); }
   if (!path.startsWith("/") || path.startsWith("//")) throw new Error("API path must be relative and start with /");
@@ -109,10 +115,12 @@ function scrub(value: string, secret: string): string {
 }
 
 class TypeAnonymizer {
-  private readonly key: Buffer;\n  private readonly service: string;
+  private readonly key: Buffer;
+  private readonly service: string;
 
   constructor(secret: string, service: string) {
-    this.service = service;\n    this.key = createHmac("sha256", secret).update(`pi-crm-inspector/anonymization/${service}`).digest();
+    this.service = service;
+    this.key = createHmac("sha256", secret).update(`pi-crm-inspector/anonymization/${service}`).digest();
   }
 
   private digest(type: string, value: string): Buffer {
