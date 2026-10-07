@@ -196,7 +196,11 @@ class TypeAnonymizer {
     if (Array.isArray(value)) return value.map((item) => this.anonymize(item));
     if (typeof value === "object") {
       const result: Record<string, unknown> = {};
-      for (const [key, item] of Object.entries(value as Record<string, unknown>)) result[key] = this.anonymize(item);
+      for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+        // Preserve identifiers, booleans, and fields whose name contains "status".
+        const preserve = /^(?:id|ids|.*(?:_id|Id|Ids|_ids))$/i.test(key) || typeof item === "boolean" || /status/i.test(key);
+        result[key] = preserve ? item : this.anonymize(item);
+      }
       return result;
     }
     return this.string(String(value));

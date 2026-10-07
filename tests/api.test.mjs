@@ -81,10 +81,16 @@ test("API response keeps object schema while anonymizing every JSON value", asyn
   const oldFetch = globalThis.fetch;
   const payload = {
     id: 12345,
+    customerId: "cust_001234",
+    order_id: 987654,
+    ids: ["a1", "b2"],
     name: "Ivan Petrov",
     email: "ivan@example.com",
     phone: "+79991234567",
     active: true,
+    verified: false,
+    status: "active",
+    orderStatus: "processing",
     balance: 15320.5,
     createdAt: "2026-09-12T10:30:00Z",
     uuid: "550e8400-e29b-41d4-a716-446655440000",
@@ -99,6 +105,14 @@ test("API response keeps object schema while anonymizing every JSON value", asyn
     const b = JSON.parse(second.body);
     assert.deepEqual(Object.keys(a), Object.keys(payload));
     assert.deepEqual(Object.keys(a.profile), Object.keys(payload.profile));
+    assert.equal(a.id, payload.id);
+    assert.equal(a.customerId, payload.customerId);
+    assert.equal(a.order_id, payload.order_id);
+    assert.deepEqual(a.ids, payload.ids);
+    assert.equal(a.active, payload.active);
+    assert.equal(a.verified, payload.verified);
+    assert.equal(a.status, payload.status);
+    assert.equal(a.orderStatus, payload.orderStatus);
     assert.equal(typeof a.id, "number");
     assert.equal(Number.isInteger(a.id), true);
     assert.equal(typeof a.balance, "number");
