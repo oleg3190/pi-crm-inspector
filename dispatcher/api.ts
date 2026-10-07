@@ -187,13 +187,18 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   const { config, secret } = resolveService(input.service);
   const url = configuredApiUrl(input.service, input.path, config);
   const auth = config.auth;
-  const authHeader = auth.type === "bearer"
+  const authHeader: HeadersInit = auth.type === "bearer"
     ? { Authorization: `Bearer ${secret}` }
     : { [(auth.header?.trim() || DEFAULT_API_KEY_HEADER)]: `${auth.prefix ?? ""}${secret}` };
+  const headers: HeadersInit = {
+    Accept: "application/json, text/plain;q=0.9, */*;q=0.1",
+    ...authHeader,
+    ...(input.body !== undefined ? { "Content-Type": "application/json" } : {}),
+  };
 
   const response = await fetch(url, {
     method: input.method,
-    headers: { Accept: "application/json, text/plain;q=0.9, */*;q=0.1", ...authHeader, ...(input.body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    headers,
     body: input.body,
     redirect: "error",
   });
