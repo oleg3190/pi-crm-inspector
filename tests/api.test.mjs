@@ -25,7 +25,8 @@ test("API request injects a service secret but never returns it", async () => {
   };
   try {
     const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
-    assert.equal(result.url, "https://customers.example.test/v1/customers");
+    assert.match(result.url, /^https:\/\/customers\.example\.test\/[A-Za-z0-9]+$/);
+    assert.doesNotMatch(result.url, /v1\/customers/);
     assert.equal(result.anonymized, true);
     assert.doesNotMatch(result.body, /customers-secret/);
     assert.equal(JSON.parse(result.body).echoed !== "customers-secret", true);
