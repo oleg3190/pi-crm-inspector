@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { Type } from "typebox";
 
 export const ApiRequestParametersSchema = Type.Object({
@@ -13,6 +13,32 @@ const SERVICES_ENV = "PI_CRM_API_SERVICES_JSON";
 const DEFAULT_API_KEY_HEADER = "X-API-Key";
 const SECRET_REF_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 const HEADER_RE = /^[A-Za-z0-9-]{1,64}$/;
+const API_URL_TOKEN_PREFIX = "/__pi_crm_url/";
+const API_URL_TOKEN_MAX = 2048;
+
+type ApiUrlToken = { service: string; url: string };
+
+class ApiUrlTokenStore {
+  private readonly tokens = new Map<string, ApiUrlToken>();
+
+  put(service: string, url: string): string {
+    let token = "";
+    do token = randomUUID().replaceAll("-", ""); while (this.tokens.has(token));
+    this.tokens.set(token, { service, url });
+    while (this.tokens.size > API_URL_TOKEN_MAX) {
+      this.tokens.delete(this.tokens.keys().next().value as string);
+    }
+    return token;
+  }
+
+  get(service: string, token: string): string | undefined {
+    const entry = this.tokens.get(token);
+    if (!entry || entry.service !== service) return undefined;
+    return entry.url;
+  }
+}
+
+const apiUrlTokens = new ApiUrlTokenStore();
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?[0-9][0-9 .()_-]{6,}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -69,7 +95,7 @@ function resolveService(service: string): { config: ServiceConfig; secret: strin
   return { config, secret };
 }
 
-function configuredApiUrl(service: string, path: string, config: ServiceConfig): URL {
+function configuredApiUrl(service: string, path: string, config: ServiceConfig): URL {\n  const tokenMatch = path.match(/^(?:https:\/\/example\\.invalid)?\/__pi_crm_url\/([a-f0-9]{32})$/i);\n  if (tokenMatch) {\n    const resolved = apiUrlTokens.get(service, tokenMatch[1]);\n    if (!resolved) throw new Error("Unknown or expired anonymized API URL");\n    path = resolved;\n  }
   let baseUrl: URL;
   try { baseUrl = new URL(config.baseUrl); } catch { throw new Error(`CRM service '${service}' has an invalid base URL`); }
   if (!path.startsWith("/") || path.startsWith("//")) throw new Error("API path must be relative and start with /");
@@ -83,10 +109,10 @@ function scrub(value: string, secret: string): string {
 }
 
 class TypeAnonymizer {
-  private readonly key: Buffer;
+  private readonly key: Buffer;\n  private readonly service: string;
 
   constructor(secret: string, service: string) {
-    this.key = createHmac("sha256", secret).update(`pi-crm-inspector/anonymization/${service}`).digest();
+    this.service = service;\n    this.key = createHmac("sha256", secret).update(`pi-crm-inspector/anonymization/${service}`).digest();
   }
 
   private digest(type: string, value: string): Buffer {
@@ -139,7 +165,7 @@ class TypeAnonymizer {
       return `${year}-${month}-${day}T${hour}:${minute}:${second}Z`;
     }
     if (/^https?:\/\//i.test(value)) {
-      return `https://example.invalid/${this.hex("url", value, 16)}`;
+      return `https://example.invalid${API_URL_TOKEN_PREFIX}${apiUrlTokens.put(this.service, value)}`;
     }
     if (value.length === 0) return "";
     const d = this.bytes("string", value);
@@ -215,7 +241,7 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   return {
     status: response.status,
     statusText: response.statusText,
-    url: safeUrl.toString(),
+    url: safeUrlValue,
     contentType,
     body,
     ...(truncated ? { truncated: true } : {}),
