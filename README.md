@@ -64,3 +64,33 @@ The canonical action/assertion schemas live in shared/schema.ts.
 ## AI-oriented diagnostics
 
 Successful results include a compact `diagnosticsSummary` with action/assertion counts, failed network requests, console/page errors, and checkpoints. Network entries mark failed responses and expose only a bounded response content type; headers, cookies, and credentials remain excluded.
+
+## CRM API tool
+
+The main agent can call `crm_api_request` for allowlisted CRM services without receiving their API secrets. Configure one JSON service registry in `PI_CRM_API_SERVICES_JSON`; each service has its own HTTPS `baseUrl` and `auth.secretRef`. Secrets themselves stay only in the runtime environment.
+
+Example:
+
+```json
+{
+  "customers": { "baseUrl": "https://customers.example.test", "auth": { "type": "apiKey", "header": "X-API-Key", "secretRef": "CUSTOMERS_API_KEY" } },
+  "orders": { "baseUrl": "https://orders.example.test", "auth": { "type": "bearer", "secretRef": "ORDERS_API_TOKEN" } }
+}
+```
+
+The agent supplies only `service`, relative `path`, HTTP method, and optional body. The runtime resolves the service, injects API-key or Bearer authentication, rejects cross-origin/absolute paths, uses `redirect: "error"`, bounds the response at 256 KiB, and anonymizes the response before it reaches the agent.
+
+### API response anonymization
+
+CRM API responses are anonymized **before they are returned to the agent**. The runtime does not require a list of field names: it recursively walks every JSON value and preserves the response structure and value types while replacing the data.
+
+- object keys and nesting stay unchanged;
+- strings become other strings of the same general shape; emails, phones, UUIDs, URLs, and ISO dates remain valid in their respective formats;
+- integers remain integers, numbers remain numbers, booleans remain booleans, null remains null;
+- arrays keep their length and recursively preserve element types;
+- the same source value maps deterministically to the same replacement for the same configured service, so repeated API calls remain coherent for the agent;
+- plain-text responses are replaced as strings rather than passed through raw;
+- API secrets are scrubbed before anonymization and never appear in the returned body or URL;
+- the anonymization key is derived inside the runtime from the service secret and is never exposed to the agent.
+
+There is intentionally no field allowlist: unknown CRM schemas are anonymized automatically. This is a privacy boundary for agent context, not merely log redaction.
