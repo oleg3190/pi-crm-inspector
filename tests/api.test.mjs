@@ -2,62 +2,60 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { executeApiRequest } from "../dispatcher/api.ts";
 
-test("API request injects the key at runtime and never returns it", async () => {
-  const previousBase = process.env.PI_CRM_API_BASE_URL;
-  const previousKey = process.env.PI_CRM_API_KEY;
-  const previousHeader = process.env.PI_CRM_API_KEY_HEADER;
-  const previousFetch = globalThis.fetch;
+const registry = JSON.stringify({
+  customers: { baseUrl: "https://customers.example.test", auth: { type: "apiKey", header: "X-API-Key", secretRef: "CUSTOMERS_API_KEY" } },
+  orders: { baseUrl: "https://orders.example.test", auth: { type: "bearer", secretRef: "ORDERS_API_TOKEN" } },
+});
 
-  process.env.PI_CRM_API_BASE_URL = "https://api.example.test";
-  process.env.PI_CRM_API_KEY = "super-secret";
-  process.env.PI_CRM_API_KEY_HEADER = "X-API-Key";
-
+test("API request selects a service and injects its secret at runtime", async () => {
+  const old = { registry: process.env.PI_CRM_API_SERVICES_JSON, key: process.env.CUSTOMERS_API_KEY, fetch: globalThis.fetch };
+  process.env.PI_CRM_API_SERVICES_JSON = registry;
+  process.env.CUSTOMERS_API_KEY = "customers-secret";
   let seen: RequestInit | undefined;
   globalThis.fetch = async (_input, init) => {
     seen = init;
-    return new Response(JSON.stringify({ ok: true, echoed: "super-secret" }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(JSON.stringify({ echoed: "customers-secret" }), { status: 200, headers: { "content-type": "application/json" } });
   };
-
   try {
-    const result = await executeApiRequest({ method: "GET", path: "/v1/customers" });
-    assert.equal(result.status, 200);
-    assert.equal(result.url, "https://api.example.test/v1/customers");
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
+    assert.equal(result.url, "https://customers.example.test/v1/customers");
+    assert.doesNotMatch(result.body, /customers-secret/);
     assert.match(result.body, /REDACTED/);
-    assert.doesNotMatch(result.body, /super-secret/);
-    assert.equal((seen?.headers as Record<string, string>)["X-API-Key"], "super-secret");
+    assert.equal((seen?.headers as Record<string, string>)["X-API-Key"], "customers-secret");
   } finally {
-    globalThis.fetch = previousFetch;
-    if (previousBase === undefined) delete process.env.PI_CRM_API_BASE_URL;
-    else process.env.PI_CRM_API_BASE_URL = previousBase;
-    if (previousKey === undefined) delete process.env.PI_CRM_API_KEY;
-    else process.env.PI_CRM_API_KEY = previousKey;
-    if (previousHeader === undefined) delete process.env.PI_CRM_API_KEY_HEADER;
-    else process.env.PI_CRM_API_KEY_HEADER = previousHeader;
+    globalThis.fetch = old.fetch;
+    if (old.registry === undefined) delete process.env.PI_CRM_API_SERVICES_JSON; else process.env.PI_CRM_API_SERVICES_JSON = old.registry;
+    if (old.key === undefined) delete process.env.CUSTOMERS_API_KEY; else process.env.CUSTOMERS_API_KEY = old.key;
   }
 });
 
-test("API request rejects absolute or cross-origin paths", async () => {
-  const previousBase = process.env.PI_CRM_API_BASE_URL;
-  const previousKey = process.env.PI_CRM_API_KEY;
-  process.env.PI_CRM_API_BASE_URL = "https://api.example.test";
-  process.env.PI_CRM_API_KEY = "secret";
-
+test("API request supports bearer auth for another service", async () => {
+  const old = { registry: process.env.PI_CRM_API_SERVICES_JSON, token: process.env.ORDERS_API_TOKEN, fetch: globalThis.fetch };
+  process.env.PI_CRM_API_SERVICES_JSON = registry;
+  process.env.ORDERS_API_TOKEN = "orders-token";
+  let seen: RequestInit | undefined;
+  globalThis.fetch = async (_input, init) => { seen = init; return new Response("ok", { status: 200 }); };
   try {
-    await assert.rejects(
-      executeApiRequest({ method: "GET", path: "https://evil.example.test/data" }),
-      /relative and start with/,
-    );
-    await assert.rejects(
-      executeApiRequest({ method: "GET", path: "//evil.example.test/data" }),
-      /relative and start with/,
-    );
+    await executeApiRequest({ service: "orders", method: "GET", path: "/v1/orders" });
+    assert.equal((seen?.headers as Record<string, string>).Authorization, "Bearer orders-token");
   } finally {
-    if (previousBase === undefined) delete process.env.PI_CRM_API_BASE_URL;
-    else process.env.PI_CRM_API_BASE_URL = previousBase;
-    if (previousKey === undefined) delete process.env.PI_CRM_API_KEY;
-    else process.env.PI_CRM_API_KEY = previousKey;
+    globalThis.fetch = old.fetch;
+    if (old.registry === undefined) delete process.env.PI_CRM_API_SERVICES_JSON; else process.env.PI_CRM_API_SERVICES_JSON = old.registry;
+    if (old.token === undefined) delete process.env.ORDERS_API_TOKEN; else process.env.ORDERS_API_TOKEN = old.token;
+  }
+});
+
+test("API request rejects unknown service and cross-origin paths", async () => {
+  const oldRegistry = process.env.PI_CRM_API_SERVICES_JSON;
+  const oldKey = process.env.CUSTOMERS_API_KEY;
+  process.env.PI_CRM_API_SERVICES_JSON = registry;
+  process.env.CUSTOMERS_API_KEY = "secret";
+  try {
+    await assert.rejects(executeApiRequest({ service: "missing", method: "GET", path: "/data" }), /Unknown or invalid CRM service/);
+    await assert.rejects(executeApiRequest({ service: "customers", method: "GET", path: "https://evil.example.test/data" }), /relative and start with/);
+    await assert.rejects(executeApiRequest({ service: "customers", method: "GET", path: "//evil.example.test/data" }), /relative and start with/);
+  } finally {
+    if (oldRegistry === undefined) delete process.env.PI_CRM_API_SERVICES_JSON; else process.env.PI_CRM_API_SERVICES_JSON = oldRegistry;
+    if (oldKey === undefined) delete process.env.CUSTOMERS_API_KEY; else process.env.CUSTOMERS_API_KEY = oldKey;
   }
 });
