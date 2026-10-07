@@ -16,7 +16,7 @@ import {
 } from "../shared/protocol.ts";
 import { InspectSubagentParametersSchema } from "../shared/schema.ts";
 import { APP_ORIGIN } from "../inspector/policy.ts";
-import { ApiRequestParametersSchema, executeApiRequest, API_BASE_URL_ENV, API_SECRET_ENV } from "./api.ts";
+import { ApiRequestParametersSchema, executeApiRequest } from "./api.ts";
 
 const TOOL_NAME = "crm_inspector_subagent" as const;
 const API_TOOL_NAME = "crm_api_request" as const;
