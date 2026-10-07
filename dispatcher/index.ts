@@ -441,6 +441,7 @@ export default function (pi: ExtensionAPI) {
     parameters: ApiRequestParametersSchema,
     async execute(_toolCallId, params) {
       const result = await executeApiRequest(params as {
+        service: string;
         method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
         path: string;
         body?: string;
