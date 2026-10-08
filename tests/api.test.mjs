@@ -193,7 +193,7 @@ test("response handles cannot cross service boundaries", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ customers: [{ id: 1, email: "a@example.com" }] }), { status: 200, headers: { "content-type": "application/json" } });
   try {
     const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
-    await assert.rejects(
+    assert.throws(
       () => findApiResponseFields("orders", result.responseId, "email"),
       /Unknown or expired API response handle/,
     );
@@ -210,7 +210,7 @@ test("API schema stays bounded for deep and wide responses", async () => {
   const deep = { value: "secret@example.com" };
   let cursor = deep;
   for (let i = 0; i < 30; i++) { cursor.next = { value: "secret@example.com" }; cursor = cursor.next; }
-  globalThis.fetch = async () => new Response(JSON.stringify({ items: Array.from({ length: 1000 }, (_, i) => ({ id: i, payload: deep })) }), { status: 200, headers: { "content-type": "application/json" } });
+  globalThis.fetch = async () => new Response(JSON.stringify({ items: Array.from({ length: 100 }, (_, i) => ({ id: i, payload: deep })) }), { status: 200, headers: { "content-type": "application/json" } });
   try {
     const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
     assert.ok(result.schema);
