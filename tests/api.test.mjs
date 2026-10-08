@@ -179,8 +179,8 @@ test("large JSON responses return a handle and compact schema instead of the ful
     assert.deepEqual(matches.matches.map((field) => field.path), ["$.customers[*].email"]);
     const extracted = extractApiResponse("customers", result.responseId, ["$.customers[*].id", "$.customers[*].email"], 3);
     assert.equal(extracted.returned, 3);
-    assert.equal(extracted.items[0]["$.customers[*].id"], 1);
-    assert.match(extracted.items[0]["$.customers[*].email"], /^user-[a-f0-9]{8}@example\.invalid$/);
+    assert.equal(extracted.items[0].id, 1);
+    assert.match(extracted.items[0].email, /^user-[a-f0-9]{8}@example\.invalid$/);
   } finally {
     globalThis.fetch = oldFetch;
     restore.reverse().forEach((fn) => fn());
@@ -193,10 +193,29 @@ test("response handles cannot cross service boundaries", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ customers: [{ id: 1, email: "a@example.com" }] }), { status: 200, headers: { "content-type": "application/json" } });
   try {
     const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
-    assert.rejects(
+    await assert.rejects(
       () => findApiResponseFields("orders", result.responseId, "email"),
       /Unknown or expired API response handle/,
     );
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+
+test("API schema stays bounded for deep and wide responses", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const deep = { value: "secret@example.com" };
+  let cursor = deep;
+  for (let i = 0; i < 30; i++) { cursor.next = { value: "secret@example.com" }; cursor = cursor.next; }
+  globalThis.fetch = async () => new Response(JSON.stringify({ items: Array.from({ length: 1000 }, (_, i) => ({ id: i, payload: deep })) }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
+    assert.ok(result.schema);
+    assert.ok(result.schema.fields.length <= 512);
+    assert.equal(result.schema.fields.some((field) => field.path.split(".").length > 18), false);
   } finally {
     globalThis.fetch = oldFetch;
     restore.reverse().forEach((fn) => fn());
