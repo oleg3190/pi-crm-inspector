@@ -108,12 +108,14 @@ test("API request keeps JSON error bodies inspectable for 4xx and 5xx responses"
     assert.equal(rateLimited.status, 429);
     assert.equal(rateLimited.statusText, "Too Many Requests");
     assert.equal(rateLimited.schema.type, "object");
-    assert.match(rateLimited.body, /upstream failure/);
+    assert.equal(rateLimited.anonymized, true);
+    assert.doesNotMatch(rateLimited.body, /upstream failure/);
 
     const failed = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
     assert.equal(failed.status, 500);
     assert.equal(failed.statusText, "Internal Server Error");
-    assert.match(failed.body, /upstream failure/);
+    assert.equal(failed.anonymized, true);
+    assert.doesNotMatch(failed.body, /upstream failure/);
   } finally {
     restoreFetch();
     restore.reverse().forEach((fn) => fn());
