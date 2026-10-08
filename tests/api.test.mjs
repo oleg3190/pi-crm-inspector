@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { executeApiRequest, extractApiResponse, findApiResponseFields } from "../dispatcher/api.ts";
+import { executeApiRequest, extractApiResponse, findApiResponseFields, selectApiResponse } from "../dispatcher/api.ts";
 
 const registry = JSON.stringify({
   customers: { baseUrl: "https://customers.example.test", auth: { type: "apiKey", header: "X-API-Key", secretRef: "CUSTOMERS_API_KEY" } },
@@ -181,6 +181,32 @@ test("large JSON responses return a handle and compact schema instead of the ful
     assert.equal(extracted.returned, 3);
     assert.equal(extracted.items[0].id, 1);
     assert.match(extracted.items[0].email, /^user-[a-f0-9]{8}@example\.invalid$/);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API request can return only selected JSON fields in one call", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const payload = { customers: Array.from({ length: 50 }, (_, i) => ({
+    id: i + 1,
+    email: "customer" + i + "@example.com",
+    status: "active",
+    profile: { city: "Moscow", notes: "x".repeat(100) },
+  })) };
+  globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers", select: ["email", "status"], limit: 3 });
+    assert.equal(result.body, undefined);
+    assert.equal(result.schema, undefined);
+    assert.equal(result.responseId, undefined);
+    assert.deepEqual(result.selected.requested, ["email", "status"]);
+    assert.deepEqual(result.selected.fields.map((field) => field.path), ["$.customers[*].email", "$.customers[*].status"]);
+    assert.equal(result.selected.returned, 3);
+    assert.deepEqual(Object.keys(result.selected.items[0]).sort(), ["email", "status"]);
+    assert.match(result.selected.items[0].email, /^user-[a-f0-9]{8}@example\\.invalid$/);
   } finally {
     globalThis.fetch = oldFetch;
     restore.reverse().forEach((fn) => fn());
