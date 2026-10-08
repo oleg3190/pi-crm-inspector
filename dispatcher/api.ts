@@ -25,7 +25,11 @@ export const ApiExtractParametersSchema = Type.Object({
 export const API_RESPONSE_MAX_BYTES = 256 * 1024;
 export const API_RESPONSE_INLINE_MAX_BYTES = 16 * 1024;
 const API_RESPONSE_STORE_MAX = 64;
+const API_RESPONSE_STORE_MAX_BYTES = 16 * 1024 * 1024;
 const API_RESPONSE_TTL_MS = 10 * 60 * 1000;
+const API_SCHEMA_MAX_FIELDS = 512;
+const API_SCHEMA_MAX_DEPTH = 16;
+const API_SCHEMA_MAX_NODES = 10_000;
 const API_EXTRACT_MAX_BYTES = 32 * 1024;
 const SERVICES_ENV = "PI_CRM_API_SERVICES_JSON";
 const DEFAULT_API_KEY_HEADER = "X-API-Key";
@@ -79,6 +83,7 @@ export type ApiField = {
   name: string;
   type: "string" | "number" | "boolean" | "null" | "object" | "array";
   example?: string | number | boolean | null;
+  itemType?: ApiField["type"];
 };
 
 type StoredApiResponse = {
@@ -87,6 +92,7 @@ type StoredApiResponse = {
   value: unknown;
   schema: ApiField[];
   rootType: ApiField["type"];
+  sizeBytes: number;
   truncated: boolean;
 };
 
@@ -101,22 +107,23 @@ function valueType(value: unknown): ApiField["type"] {
   return "object";
 }
 
-function buildApiSchema(value: unknown, path = "$", fields: ApiField[] = []): ApiField[] {
+function buildApiSchema(value: unknown, path = "$", fields: ApiField[] = [], depth = 0, state = { nodes: 0 }): ApiField[] {
+  if (state.nodes++ >= API_SCHEMA_MAX_NODES || depth > API_SCHEMA_MAX_DEPTH || fields.length >= API_SCHEMA_MAX_FIELDS) return fields;
   const type = valueType(value);
-  if (path !== "$") {
+  if (path !== "$" && !fields.some((field) => field.path === path)) {
     const name = path.split(".").pop()?.replace(/\[\*\]$/, "") || path;
-    if (!fields.some((field) => field.path === path)) {
-      const primitive = type === "string" || type === "number" || type === "boolean" || type === "null";
-      fields.push({ path, name, type, ...(primitive ? { example: value as string | number | boolean | null } : {}) });
-    }
+    const primitive = type === "string" || type === "number" || type === "boolean" || type === "null";
+    const itemType = Array.isArray(value) && value.length > 0 ? valueType(value[0]) : undefined;
+    fields.push({ path, name, type, ...(primitive ? { example: value as string | number | boolean | null } : {}), ...(itemType ? { itemType } : {}) });
   }
   if (value === null || typeof value !== "object") return fields;
   if (Array.isArray(value)) {
-    for (const item of value.slice(0, 8)) buildApiSchema(item, path + "[*]", fields);
+    for (const item of value.slice(0, 8)) buildApiSchema(item, path + "[*]", fields, depth + 1, state);
     return fields;
   }
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    buildApiSchema(item, path === "$" ? "$." + key : path + "." + key, fields);
+    buildApiSchema(item, path === "$" ? "$." + key : path + "." + key, fields, depth + 1, state);
+    if (fields.length >= API_SCHEMA_MAX_FIELDS || state.nodes >= API_SCHEMA_MAX_NODES) break;
   }
   return fields;
 }
@@ -128,9 +135,17 @@ function cleanupApiResponses(): void {
 
 function storeApiResponse(service: string, value: unknown, schema: ApiField[], rootType: ApiField["type"], truncated: boolean): string {
   cleanupApiResponses();
+  const sizeBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+  if (sizeBytes > API_RESPONSE_STORE_MAX_BYTES) throw new Error("API response exceeds the in-memory inspection budget");
   const id = "resp_" + randomUUID().replaceAll("-", "");
-  apiResponses.set(id, { service, expiresAt: Date.now() + API_RESPONSE_TTL_MS, value, schema, rootType, truncated });
+  apiResponses.set(id, { service, expiresAt: Date.now() + API_RESPONSE_TTL_MS, value, schema, rootType, sizeBytes, truncated });
   while (apiResponses.size > API_RESPONSE_STORE_MAX) apiResponses.delete(apiResponses.keys().next().value as string);
+  let totalBytes = 0;
+  for (const [entryId, entry] of apiResponses) {
+    totalBytes += entry.sizeBytes;
+    if (totalBytes > API_RESPONSE_STORE_MAX_BYTES) apiResponses.delete(entryId);
+  }
+  if (!apiResponses.has(id)) throw new Error("API response exceeds the in-memory inspection budget");
   return id;
 }
 
@@ -143,11 +158,12 @@ function getApiResponse(service: string, responseId: string): StoredApiResponse 
 
 function findApiFields(entry: StoredApiResponse, query: string, limit: number): ApiField[] {
   const terms = query.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean);
+  const normalized = terms.map((term) => term.replace(/[_-]/g, " ").replace(/\bid\b/g, "identifier"));
   return entry.schema
     .map((field) => {
       const name = field.name.toLowerCase();
       const path = field.path.toLowerCase();
-      const score = terms.reduce((sum, term) => sum + (name === term ? 5 : name.includes(term) ? 3 : path.includes(term) ? 1 : 0), 0);
+      const score = normalized.reduce((sum, term) => { const compact = term.replace(/\s+/g, ""); return sum + (name === term || name === compact ? 5 : name.includes(term) || name.includes(compact) ? 3 : path.includes(term) ? 1 : 0); }, 0);
       return { field, score };
     })
     .filter((item) => item.score > 0)
@@ -200,7 +216,7 @@ export function extractApiResponse(service: string, responseId: string, paths: s
       rows.set(index, row);
     });
   }
-  const items = [...rows.values()];
+  const items = [...rows.values()].map((row) => Object.fromEntries(Object.entries(row).map(([path, value]) => [path.match(/(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[(\d+)\])$/)?.[1] ?? path, value])));
   while (items.length > 1 && Buffer.byteLength(JSON.stringify(items), "utf8") > API_EXTRACT_MAX_BYTES) items.pop();
   return { responseId, items, returned: items.length, truncated: entry.truncated || items.length < limit };
 }
@@ -405,7 +421,7 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   if (isJson) {
     try {
       const parsed = JSON.parse(body) as unknown;
-      const fields = buildApiSchema(parsed).slice(0, 512);
+      const fields = buildApiSchema(parsed).slice(0, API_SCHEMA_MAX_FIELDS);
       const responseId = storeApiResponse(input.service, parsed, fields, valueType(parsed), truncated);
       return {
         status: response.status,
