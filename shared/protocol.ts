@@ -224,6 +224,12 @@ export type InspectElement = {
   enabled?: boolean;
   checked?: boolean;
   expanded?: boolean;
+  geometry?: InspectGeometry & {
+    zIndex: string;
+    position: string;
+    occluded?: boolean;
+    occludedBy?: string[];
+  };
 };
 
 export type InspectScreenshot = {
@@ -615,6 +621,28 @@ function isInspectNetworkRequest(value: unknown): value is InspectNetworkRequest
   if(item.requestBodyTruncated!==undefined && typeof item.requestBodyTruncated!=="boolean") return false;
   if(item.responseBodyTruncated!==undefined && typeof item.responseBodyTruncated!=="boolean") return false;
   if(item.failed!==undefined && typeof item.failed!=="boolean") return false;
+  return true;
+}
+
+function isInspectElement(value: unknown): value is InspectElement {
+  if(!value || typeof value !== "object") return false;
+  const item=value as Record<string, unknown>;
+  if(typeof item.kind !== "string" || !["button","link","input","select","textarea","checkbox","combobox","other"].includes(item.kind)) return false;
+  if(typeof item.selector !== "string" || item.selector.length===0 || item.selector.length>2048) return false;
+  if(item.role!==undefined && (typeof item.role!=="string" || item.role.length>64)) return false;
+  if(item.name!==undefined && (typeof item.name!=="string" || item.name.length>160)) return false;
+  if(typeof item.visible!=="boolean") return false;
+  for(const key of ["enabled","checked","expanded"]) if(item[key]!==undefined && typeof item[key]!=="boolean") return false;
+  if(item.geometry!==undefined){
+    const g=item.geometry as Record<string,unknown>;
+    if(!g || typeof g.x!=="number" || !Number.isFinite(g.x) || typeof g.y!=="number" || !Number.isFinite(g.y) ||
+      typeof g.width!=="number" || !Number.isFinite(g.width) || g.width<0 ||
+      typeof g.height!=="number" || !Number.isFinite(g.height) || g.height<0 ||
+      typeof g.visible!=="boolean" || typeof g.zIndex!=="string" || g.zIndex.length>64 ||
+      typeof g.position!=="string" || g.position.length>32) return false;
+    if(g.occluded!==undefined && typeof g.occluded!=="boolean") return false;
+    if(g.occludedBy!==undefined && (!Array.isArray(g.occludedBy) || g.occludedBy.length>8 || !g.occludedBy.every((v)=>typeof v==="string" && v.length<=2048))) return false;
+  }
   return true;
 }
 
