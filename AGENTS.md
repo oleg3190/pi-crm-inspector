@@ -124,13 +124,20 @@ API-ключ/токен выбирается и добавляется runtime �
 
 
 
-### API response field inspection
+### API response field selection
 
-После `crm_api_request` для JSON-ответов сначала используй возвращённый `responseId (advanced inspection only)` и компактную `schema`, а не запрашивай полный body.
+Для больших JSON-ответов не загружай полный body в контекст. Используй один `crm_api_request` с `select` и `limit`:
 
-- `crm_api_request select` — найти нужные поля по имени или бизнес-смыслу (например `email`, `customer id`, `status`);
-- `crm_api_request select` — получить только выбранные JSON paths и ограниченное число строк;
-- используй paths из результата `crm_api_request select`, например `$.customers[*].email`;
-- не пытайся восстановить полный response через несколько больших extraction-запросов;
-- response handle короткоживущий и привязан к сервису;
-- для больших коллекций всё равно используй pagination API, а затем field inspection/extract.
+```json
+{
+  "service": "customers",
+  "method": "GET",
+  "path": "/v1/customers",
+  "select": ["id", "email", "status"],
+  "limit": 20
+}
+```
+
+`select` принимает имена полей или бизнес-смысл (`email`, `customer id`, `status`, `created date`, `total`). Runtime сам находит соответствующие поля и возвращает только компактные элементы и matched paths. Отдельные agent-facing tools для поиска/извлечения полей не используются.
+
+Если нужен большой набор данных, сначала используй пагинацию CRM. Лимиты field selection: до 32 выбранных полей, до 100 элементов и до 32 KiB результата.
