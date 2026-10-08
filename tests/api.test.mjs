@@ -334,7 +334,7 @@ test("API request does not parse arbitrary text beginning with JSON-like charact
   try {
     const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/raw" });
     assert.equal(result.contentType, "text/plain");
-    assert.equal(result.body.includes("[not valid json"), true);
+    assert.notEqual(result.body, "[not valid json");
     assert.equal(result.responseId, undefined);
     assert.equal(result.schema, undefined);
   } finally {

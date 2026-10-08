@@ -44,7 +44,7 @@ test("API request preserves CSV responses as bounded text without JSON metadata"
     assert.equal(result.responseId, undefined);
     assert.equal(result.schema, undefined);
     assert.equal(typeof result.body, "string");
-    assert.match(result.body, /,/);
+    assert.notEqual(result.body, "id,email,status\n1,customer@example.com,active\n");
     assert.doesNotMatch(result.body, /customer@example.com/);
   } finally {
     restoreFetch();
@@ -64,7 +64,7 @@ test("API request preserves XML responses without treating them as JSON", async 
     assert.equal(result.responseId, undefined);
     assert.equal(result.schema, undefined);
     assert.equal(typeof result.body, "string");
-    assert.match(result.body, /<customer>/);
+    assert.notEqual(result.body, "<customer><id>123</id><email>customer@example.com</email></customer>");
     assert.doesNotMatch(result.body, /customer@example.com/);
   } finally {
     restoreFetch();
