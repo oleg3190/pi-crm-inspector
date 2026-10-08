@@ -190,12 +190,19 @@ function collectionPath(path: string): string {
 
 function selectApiFields(entry: StoredApiResponse, queries: string[]) {
   return queries.map((query) => {
-    const matches = scoreApiFields(entry, query);
+    const matches = scoreApiFields(entry, query).filter(({ field }) =>
+      field.type !== "object" && field.type !== "array",
+    );
     const best = matches[0];
-    if (!best) throw new Error(`No JSON field matched select query: ${query}`);
+    if (!best) throw new Error(`No JSON leaf field matched select query: ${query}`);
     const tied = matches.filter((item) => item.score === best.score);
     if (tied.length > 1) {
-      const candidates = tied.slice(0, 5).map((item) => item.field.path).join(", ");
+      const candidates = tied
+        .slice()
+        .sort((a, b) => a.field.path.localeCompare(b.field.path))
+        .slice(0, 5)
+        .map((item) => item.field.path)
+        .join(", ");
       throw new Error(`Ambiguous JSON field select query: ${query}; candidates: ${candidates}. Use a more specific field description.`);
     }
     return { query, field: best.field };
