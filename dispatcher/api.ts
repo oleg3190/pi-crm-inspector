@@ -6,6 +6,8 @@ export const ApiRequestParametersSchema = Type.Object({
   method: Type.Union([Type.Literal("GET"), Type.Literal("POST"), Type.Literal("PUT"), Type.Literal("PATCH"), Type.Literal("DELETE")]),
   path: Type.String({ minLength: 1, maxLength: 2048, description: "Relative API path. Absolute URLs are not allowed." }),
   body: Type.Optional(Type.String({ maxLength: 65_536, description: "Optional request body. Usually JSON." })),
+  select: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 32, description: "Optional field names or business concepts to return from a JSON response, e.g. [\"id\", \"email\", \"status\"]." })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Maximum number of selected JSON items to return." })),
 });
 
 export const ApiFindFieldsParametersSchema = Type.Object({
@@ -76,6 +78,8 @@ export type ApiRequestInput = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   body?: string;
+  select?: string[];
+  limit?: number;
 };
 
 export type ApiField = {
@@ -205,6 +209,34 @@ export function findApiResponseFields(service: string, responseId: string, query
   return { responseId, matches: findApiFields(entry, query, limit), truncated: entry.truncated };
 }
 
+export function selectApiResponse(service: string, responseId: string, queries: string[], limit = 100) {
+  const entry = getApiResponse(service, responseId);
+  const selected = queries.map((query) => {
+    const match = findApiFields(entry, query, 1)[0];
+    if (!match) throw new Error(`No JSON field matched select query: ${query}`);
+    return { query, field: match };
+  });
+  const rows = new Map<number, Record<string, unknown>>();
+  for (const { query, field } of selected) {
+    const values = selectApiPath(entry.value, parseApiPath(field.path));
+    values.slice(0, limit).forEach((value, index) => {
+      const row = rows.get(index) ?? {};
+      row[field.name] = value;
+      rows.set(index, row);
+    });
+  }
+  const items = [...rows.values()];
+  while (items.length > 1 && Buffer.byteLength(JSON.stringify(items), "utf8") > API_EXTRACT_MAX_BYTES) items.pop();
+  return {
+    responseId,
+    requested: queries,
+    fields: selected.map(({ query, field }) => ({ query, path: field.path, name: field.name })),
+    items,
+    returned: items.length,
+    ...(entry.truncated || items.length < limit ? { truncated: true } : {}),
+  };
+}
+
 export function extractApiResponse(service: string, responseId: string, paths: string[], limit = 100) {
   const entry = getApiResponse(service, responseId);
   const rows = new Map<number, Record<string, unknown>>();
@@ -228,6 +260,13 @@ export type ApiRequestResult = {
   contentType?: string;
   body?: string;
   responseId?: string;
+  selected?: {
+    requested: string[];
+    fields: Array<{ query: string; path: string; name: string }>;
+    items: Array<Record<string, unknown>>;
+    returned: number;
+    truncated?: boolean;
+  };
   schema?: { type: ApiField["type"]; fields: ApiField[]; truncated?: boolean };
   truncated?: boolean;
   anonymized: true;
@@ -423,13 +462,15 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
       const parsed = JSON.parse(body) as unknown;
       const fields = buildApiSchema(parsed).slice(0, API_SCHEMA_MAX_FIELDS);
       const responseId = storeApiResponse(input.service, parsed, fields, valueType(parsed), truncated);
+      const selected = input.select?.length
+        ? selectApiResponse(input.service, responseId, input.select, input.limit ?? 100)
+        : undefined;
       return {
         status: response.status,
         statusText: response.statusText,
         url: safeUrlValue,
         contentType,
-        responseId,
-        schema: { type: valueType(parsed), fields, ...(truncated ? { truncated: true } : {}) },
+        ...(selected ? { selected } : { responseId, schema: { type: valueType(parsed), fields, ...(truncated ? { truncated: true } : {}) } }),
         ...(Buffer.byteLength(body, "utf8") <= API_RESPONSE_INLINE_MAX_BYTES ? { body } : {}),
         ...(truncated ? { truncated: true } : {}),
         anonymized: true,
