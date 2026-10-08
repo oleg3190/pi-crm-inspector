@@ -472,7 +472,7 @@ export default function (pi: ExtensionAPI) {
     executionMode: "sequential",
     parameters: ApiFindFieldsParametersSchema,
     async execute(_toolCallId, params) {
-      const result = findApiResponseFields(params.responseId ? String(params.responseId) : "", String(params.query), params.limit ?? 10);
+      const result = findApiResponseFields(String(params.service), String(params.responseId), String(params.query), params.limit ?? 10);
       return {
         content: [{ type: "text", text: JSON.stringify(result) }],
         details: result,
@@ -495,7 +495,7 @@ export default function (pi: ExtensionAPI) {
     executionMode: "sequential",
     parameters: ApiExtractParametersSchema,
     async execute(_toolCallId, params) {
-      const result = extractApiResponse("", params.responseId ? String(params.responseId) : "", params.paths as string[], params.limit ?? 100);
+      const result = extractApiResponse(String(params.service), String(params.responseId), params.paths as string[], params.limit ?? 100);
       return {
         content: [{ type: "text", text: JSON.stringify(result) }],
         details: result,
