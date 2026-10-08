@@ -467,7 +467,6 @@ function anonymizeResponseBody(body: string, contentType: string | undefined, se
   const scrubbed = scrub(body, secret);
   const anonymizer = new TypeAnonymizer(secret, service);
   if (contentType?.toLowerCase().includes("json")) return anonymizer.json(scrubbed);
-  if (/^\s*[\[{]/.test(scrubbed)) return anonymizer.json(scrubbed);
   return anonymizer.anonymize(scrubbed) as string;
 }
 
@@ -498,7 +497,7 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   const anonymizer = new TypeAnonymizer(secret, input.service);
   let body = anonymizeResponseBody(rawBody, contentType, secret, input.service);
   const safeUrlValue = anonymizer.anonymize(url.toString()) as string;
-  const isJson = contentType?.toLowerCase().includes("json") || /^\s*[\[{]/.test(scrubbedBody);
+  const isJson = contentType?.toLowerCase().includes("json");
   if (isJson) {
     let parsed: unknown;
     try {
