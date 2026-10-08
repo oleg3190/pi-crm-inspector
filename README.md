@@ -96,25 +96,20 @@ CRM API responses are anonymized **before they are returned to the agent**. The 
 There is intentionally no field allowlist: unknown CRM schemas are anonymized automatically. This is a privacy boundary for agent context, not merely log redaction.
 
 
-### API response field inspection
+### API response field selection
 
-JSON responses from `crm_api_request` are stored behind a short-lived opaque `responseId (advanced inspection only)`. The agent receives a compact schema instead of a large JSON body; only small JSON responses (up to 16 KiB) may also include the anonymized body inline.
-
-Use `crm_api_request select` to locate fields by name or business concept:
-
-```json
-{ "service": "customers", "responseId (advanced inspection only)": "resp_...", "query": "customer email" }
-```
-
-Then use `crm_api_request select` with the returned JSON paths:
+For large JSON responses, the agent can request only the fields it needs in the same `crm_api_request` call. The runtime still anonymizes and bounds the full response internally, but only the selected compact data is returned to the agent.
 
 ```json
 {
   "service": "customers",
-  "responseId (advanced inspection only)": "resp_...",
-  "paths": ["$.customers[*].id", "$.customers[*].email"],
+  "method": "GET",
+  "path": "/v1/customers",
+  "select": ["id", "email", "status"],
   "limit": 20
 }
 ```
 
-The response store is bounded and expires after 10 minutes. It is capped at 64 handles and 16 MiB total stored JSON. Handles are bound to their CRM service. Schema discovery is capped at 512 fields, depth 16, and 10,000 visited nodes. Extraction is capped at 100 rows and 32 KiB and returns compact objects keyed by the selected field names. Supported paths use a restricted JSONPath subset: object properties, numeric array indexes, and `[*]`. This prevents large unrelated CRM objects from entering the model context.
+`select` accepts field names or business concepts (for example `email`, `customer id`, `status`, `created date`, or `total`). The runtime resolves them against the response schema and returns compact items plus the matched paths. This is the normal agent workflow; the response-handle/schema helpers remain internal implementation details rather than separate agent tools.
+
+Selection is bounded to 32 requested fields, 100 returned items, and 32 KiB of extracted JSON. If the API response itself exceeds 256 KiB, the agent must use the CRM API's pagination mechanism instead of reconstructing the full dataset.
