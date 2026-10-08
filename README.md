@@ -98,20 +98,20 @@ There is intentionally no field allowlist: unknown CRM schemas are anonymized au
 
 ### API response field inspection
 
-JSON responses from `crm_api_request` are stored behind a short-lived opaque `responseId`. The agent receives a compact schema instead of a large JSON body; only small JSON responses (up to 16 KiB) may also include the anonymized body inline.
+JSON responses from `crm_api_request` are stored behind a short-lived opaque `responseId (advanced inspection only)`. The agent receives a compact schema instead of a large JSON body; only small JSON responses (up to 16 KiB) may also include the anonymized body inline.
 
-Use `crm_api_find_fields` to locate fields by name or business concept:
+Use `crm_api_request select` to locate fields by name or business concept:
 
 ```json
-{ "service": "customers", "responseId": "resp_...", "query": "customer email" }
+{ "service": "customers", "responseId (advanced inspection only)": "resp_...", "query": "customer email" }
 ```
 
-Then use `crm_api_extract` with the returned JSON paths:
+Then use `crm_api_request select` with the returned JSON paths:
 
 ```json
 {
   "service": "customers",
-  "responseId": "resp_...",
+  "responseId (advanced inspection only)": "resp_...",
   "paths": ["$.customers[*].id", "$.customers[*].email"],
   "limit": 20
 }
