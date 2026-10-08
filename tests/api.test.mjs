@@ -300,3 +300,128 @@ test("API field selection does not mark a short result as truncated", async () =
     restore.reverse().forEach((fn) => fn());
   }
 });
+
+
+test("API request preserves PDF responses as bounded anonymized binary-safe text", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0xff, 0xfe, 0x00, 0x25]);
+  globalThis.fetch = async () => new Response(pdfBytes, {
+    status: 200,
+    headers: { "content-type": "application/pdf" },
+  });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/document/123" });
+    assert.equal(result.contentType, "application/pdf");
+    assert.equal(result.anonymized, true);
+    assert.equal(typeof result.body, "string");
+    assert.equal(result.body.includes("%PDF-1.7"), true);
+    assert.equal(result.responseId, undefined);
+    assert.equal(result.schema, undefined);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API request does not parse arbitrary text beginning with JSON-like characters", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("[not valid json", {
+    status: 200,
+    headers: { "content-type": "text/plain" },
+  });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/raw" });
+    assert.equal(result.contentType, "text/plain");
+    assert.equal(result.body.includes("[not valid json"), true);
+    assert.equal(result.responseId, undefined);
+    assert.equal(result.schema, undefined);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API request returns structured errors without exposing the API secret", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: "authorization failed",
+    token: "secret",
+    requestId: "req-123",
+  }), {
+    status: 401,
+    statusText: "Unauthorized",
+    headers: { "content-type": "application/json" },
+  });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/customers" });
+    assert.equal(result.status, 401);
+    assert.equal(result.statusText, "Unauthorized");
+    assert.equal(result.anonymized, true);
+    assert.equal(result.body.includes("secret"), false);
+    assert.match(result.body, /authorization failed/);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API request handles empty 204 responses without inventing JSON metadata", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, {
+    status: 204,
+    statusText: "No Content",
+  });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "DELETE", path: "/v1/customers/123" });
+    assert.equal(result.status, 204);
+    assert.equal(result.body, "");
+    assert.equal(result.responseId, undefined);
+    assert.equal(result.schema, undefined);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API request truncates oversized PDF bodies to the response byte limit", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const oversizedPdf = new Uint8Array(256 * 1024 + 1024);
+  oversizedPdf.set([0x25, 0x50, 0x44, 0x46], 0);
+  globalThis.fetch = async () => new Response(oversizedPdf, {
+    status: 200,
+    headers: { "content-type": "application/pdf" },
+  });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/document/large.pdf" });
+    assert.equal(result.contentType, "application/pdf");
+    assert.equal(result.truncated, true);
+    assert.equal(Buffer.byteLength(result.body, "utf8") <= 256 * 1024, true);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API request refuses redirects instead of following an untrusted location", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  let seen;
+  globalThis.fetch = async (_input, init) => {
+    seen = init;
+    return new Response(null, { status: 302, headers: { location: "https://evil.example.test/steal" } });
+  };
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/redirect" });
+    assert.equal(seen.redirect, "error");
+    assert.equal(result.status, 302);
+    assert.equal(result.body, "");
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
