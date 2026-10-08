@@ -171,7 +171,8 @@ function scoreApiFields(entry: StoredApiResponse, query: string): ScoredApiField
       const path = field.path.toLowerCase();
       const score = normalized.reduce((sum, term) => {
         const compact = term.replace(/\s+/g, "");
-        return sum + (name === term || name === compact ? 5 : name.includes(term) || name.includes(compact) ? 3 : path.includes(term) ? 1 : 0);
+        const identifierMatch = term === "identifier" && /^(?:id|ids|.*(?:_id|Ids|_ids))$/i.test(name);
+        return sum + (identifierMatch ? 6 : name === term || name === compact ? 5 : name.includes(term) || name.includes(compact) ? 3 : path.includes(term) ? 1 : 0);
       }, 0);
       return { field, score };
     })
@@ -519,7 +520,7 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
         url: safeUrlValue,
         contentType,
         ...(selected ? { selected } : { responseId, schema: { type: valueType(parsed), fields, ...(truncated ? { truncated: true } : {}) } }),
-        ...(Buffer.byteLength(body, "utf8") <= API_RESPONSE_INLINE_MAX_BYTES ? { body } : {}),
+        ...(!selected && Buffer.byteLength(body, "utf8") <= API_RESPONSE_INLINE_MAX_BYTES ? { body } : {}),
         ...(truncated ? { truncated: true } : {}),
         anonymized: true,
       };
