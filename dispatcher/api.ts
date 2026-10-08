@@ -8,7 +8,23 @@ export const ApiRequestParametersSchema = Type.Object({
   body: Type.Optional(Type.String({ maxLength: 65_536, description: "Optional request body. Usually JSON." })),
 });
 
+export const ApiFindFieldsParametersSchema = Type.Object({
+  responseId: Type.String({ minLength: 1, maxLength: 128 }),
+  query: Type.String({ minLength: 1, maxLength: 128 }),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+});
+
+export const ApiExtractParametersSchema = Type.Object({
+  responseId: Type.String({ minLength: 1, maxLength: 128 }),
+  paths: Type.Array(Type.String({ minLength: 2, maxLength: 512 }), { minItems: 1, maxItems: 32 }),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+});
+
 export const API_RESPONSE_MAX_BYTES = 256 * 1024;
+export const API_RESPONSE_INLINE_MAX_BYTES = 16 * 1024;
+const API_RESPONSE_STORE_MAX = 64;
+const API_RESPONSE_TTL_MS = 10 * 60 * 1000;
+const API_EXTRACT_MAX_BYTES = 32 * 1024;
 const SERVICES_ENV = "PI_CRM_API_SERVICES_JSON";
 const DEFAULT_API_KEY_HEADER = "X-API-Key";
 const SECRET_REF_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
@@ -55,12 +71,146 @@ export type ApiRequestInput = {
   path: string;
   body?: string;
 };
+
+export type ApiField = {
+  path: string;
+  name: string;
+  type: "string" | "number" | "boolean" | "null" | "object" | "array";
+  example?: string | number | boolean | null;
+};
+
+type StoredApiResponse = {
+  service: string;
+  expiresAt: number;
+  value: unknown;
+  schema: ApiField[];
+  rootType: ApiField["type"];
+  truncated: boolean;
+};
+
+const apiResponses = new Map<string, StoredApiResponse>();
+
+function valueType(value: unknown): ApiField["type"] {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "string") return "string";
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  return "object";
+}
+
+function buildApiSchema(value: unknown, path = "$", fields: ApiField[] = []): ApiField[] {
+  const type = valueType(value);
+  if (path !== "$") {
+    const name = path.split(".").pop()?.replace(/\[\*\]$/, "") || path;
+    if (!fields.some((field) => field.path === path)) {
+      const primitive = type === "string" || type === "number" || type === "boolean" || type === "null";
+      fields.push({ path, name, type, ...(primitive ? { example: value as string | number | boolean | null } : {}) });
+    }
+  }
+  if (value === null || typeof value !== "object") return fields;
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 8)) buildApiSchema(item, path + "[*]", fields);
+    return fields;
+  }
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    buildApiSchema(item, path === "$" ? "$." + key : path + "." + key, fields);
+  }
+  return fields;
+}
+
+function cleanupApiResponses(): void {
+  const now = Date.now();
+  for (const [id, entry] of apiResponses) if (entry.expiresAt <= now) apiResponses.delete(id);
+}
+
+function storeApiResponse(service: string, value: unknown, schema: ApiField[], rootType: ApiField["type"], truncated: boolean): string {
+  cleanupApiResponses();
+  const id = "resp_" + randomUUID().replaceAll("-", "");
+  apiResponses.set(id, { service, expiresAt: Date.now() + API_RESPONSE_TTL_MS, value, schema, rootType, truncated });
+  while (apiResponses.size > API_RESPONSE_STORE_MAX) apiResponses.delete(apiResponses.keys().next().value as string);
+  return id;
+}
+
+function getApiResponse(service: string, responseId: string): StoredApiResponse {
+  cleanupApiResponses();
+  const entry = apiResponses.get(responseId);
+  if (!entry || entry.service !== service) throw new Error("Unknown or expired API response handle");
+  return entry;
+}
+
+function findApiFields(entry: StoredApiResponse, query: string, limit: number): ApiField[] {
+  const terms = query.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean);
+  return entry.schema
+    .map((field) => {
+      const name = field.name.toLowerCase();
+      const path = field.path.toLowerCase();
+      const score = terms.reduce((sum, term) => sum + (name === term ? 5 : name.includes(term) ? 3 : path.includes(term) ? 1 : 0), 0);
+      return { field, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.field.path.length - b.field.path.length)
+    .slice(0, limit)
+    .map((item) => item.field);
+}
+
+function parseApiPath(path: string): Array<string | number | "*"> {
+  if (!/^\$(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[(?:\d+|\*)\])*$/.test(path)) throw new Error("Unsupported response path: " + path);
+  const parts: Array<string | number | "*"> = [];
+  const re = /\.([A-Za-z_][A-Za-z0-9_-]*)|\[(\d+|\*)\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(path)) !== null) parts.push(match[1] ?? (match[2] === "*" ? "*" : Number(match[2])));
+  return parts;
+}
+
+function selectApiPath(value: unknown, parts: Array<string | number | "*">): unknown[] {
+  let current = [value];
+  for (const part of parts) {
+    const next: unknown[] = [];
+    for (const item of current) {
+      if (part === "*") {
+        if (Array.isArray(item)) next.push(...item);
+      } else if (typeof part === "number") {
+        if (Array.isArray(item) && item[part] !== undefined) next.push(item[part]);
+      } else if (item && typeof item === "object" && !Array.isArray(item)) {
+        const child = (item as Record<string, unknown>)[part];
+        if (child !== undefined) next.push(child);
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
+export function findApiResponseFields(service: string, responseId: string, query: string, limit = 10) {
+  const entry = getApiResponse(service, responseId);
+  return { responseId, matches: findApiFields(entry, query, limit), truncated: entry.truncated };
+}
+
+export function extractApiResponse(service: string, responseId: string, paths: string[], limit = 100) {
+  const entry = getApiResponse(service, responseId);
+  const rows = new Map<number, Record<string, unknown>>();
+  for (const path of paths) {
+    const values = selectApiPath(entry.value, parseApiPath(path));
+    values.slice(0, limit).forEach((value, index) => {
+      const row = rows.get(index) ?? {};
+      row[path] = value;
+      rows.set(index, row);
+    });
+  }
+  const items = [...rows.values()];
+  while (items.length > 1 && Buffer.byteLength(JSON.stringify(items), "utf8") > API_EXTRACT_MAX_BYTES) items.pop();
+  return { responseId, items, returned: items.length, truncated: entry.truncated || items.length < limit };
+}
+
 export type ApiRequestResult = {
   status: number;
   statusText: string;
   url: string;
   contentType?: string;
-  body: string;
+  body?: string;
+  responseId?: string;
+  schema?: { type: ApiField["type"]; fields: ApiField[]; truncated?: boolean };
   truncated?: boolean;
   anonymized: true;
 };
@@ -249,12 +399,33 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   const body = anonymizeResponseBody(rawBody, contentType, secret, input.service);
   const anonymizer = new TypeAnonymizer(secret, input.service);
   const safeUrlValue = anonymizer.anonymize(url.toString()) as string;
+  const isJson = contentType?.toLowerCase().includes("json") || /^\s*[\[{]/.test(body);
+  if (isJson) {
+    try {
+      const parsed = JSON.parse(body) as unknown;
+      const fields = buildApiSchema(parsed).slice(0, 512);
+      const responseId = storeApiResponse(input.service, parsed, fields, valueType(parsed), truncated);
+      return {
+        status: response.status,
+        statusText: response.statusText,
+        url: safeUrlValue,
+        contentType,
+        responseId,
+        schema: { type: valueType(parsed), fields, ...(truncated ? { truncated: true } : {}) },
+        ...(Buffer.byteLength(body, "utf8") <= API_RESPONSE_INLINE_MAX_BYTES ? { body } : {}),
+        ...(truncated ? { truncated: true } : {}),
+        anonymized: true,
+      };
+    } catch {
+      // Fall through to bounded plain-text response.
+    }
+  }
   return {
     status: response.status,
     statusText: response.statusText,
     url: safeUrlValue,
     contentType,
-    body,
+    body: Buffer.byteLength(body, "utf8") <= API_RESPONSE_INLINE_MAX_BYTES ? body : undefined,
     ...(truncated ? { truncated: true } : {}),
     anonymized: true,
   };
