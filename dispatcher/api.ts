@@ -160,20 +160,46 @@ function getApiResponse(service: string, responseId: string): StoredApiResponse 
   return entry;
 }
 
-function findApiFields(entry: StoredApiResponse, query: string, limit: number): ApiField[] {
+type ScoredApiField = { field: ApiField; score: number };
+
+function scoreApiFields(entry: StoredApiResponse, query: string): ScoredApiField[] {
   const terms = query.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean);
   const normalized = terms.map((term) => term.replace(/[_-]/g, " ").replace(/\bid\b/g, "identifier"));
   return entry.schema
     .map((field) => {
       const name = field.name.toLowerCase();
       const path = field.path.toLowerCase();
-      const score = normalized.reduce((sum, term) => { const compact = term.replace(/\s+/g, ""); return sum + (name === term || name === compact ? 5 : name.includes(term) || name.includes(compact) ? 3 : path.includes(term) ? 1 : 0); }, 0);
+      const score = normalized.reduce((sum, term) => {
+        const compact = term.replace(/\s+/g, "");
+        return sum + (name === term || name === compact ? 5 : name.includes(term) || name.includes(compact) ? 3 : path.includes(term) ? 1 : 0);
+      }, 0);
       return { field, score };
     })
     .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.field.path.length - b.field.path.length)
-    .slice(0, limit)
-    .map((item) => item.field);
+    .sort((a, b) => b.score - a.score || a.field.path.length - b.field.path.length);
+}
+
+function findApiFields(entry: StoredApiResponse, query: string, limit: number): ApiField[] {
+  return scoreApiFields(entry, query).slice(0, limit).map((item) => item.field);
+}
+
+function collectionPath(path: string): string {
+  const lastWildcard = path.lastIndexOf("[*]");
+  return lastWildcard < 0 ? "$" : path.slice(0, lastWildcard + 3);
+}
+
+function selectApiFields(entry: StoredApiResponse, queries: string[]) {
+  return queries.map((query) => {
+    const matches = scoreApiFields(entry, query);
+    const best = matches[0];
+    if (!best) throw new Error(`No JSON field matched select query: ${query}`);
+    const tied = matches.filter((item) => item.score === best.score);
+    if (tied.length > 1) {
+      const candidates = tied.slice(0, 5).map((item) => item.field.path).join(", ");
+      throw new Error(`Ambiguous JSON field select query: ${query}; candidates: ${candidates}. Use a more specific field description.`);
+    }
+    return { query, field: best.field };
+  });
 }
 
 function parseApiPath(path: string): Array<string | number | "*"> {
@@ -211,13 +237,15 @@ export function findApiResponseFields(service: string, responseId: string, query
 
 export function selectApiResponse(service: string, responseId: string, queries: string[], limit = 100) {
   const entry = getApiResponse(service, responseId);
-  const selected = queries.map((query) => {
-    const match = findApiFields(entry, query, 1)[0];
-    if (!match) throw new Error(`No JSON field matched select query: ${query}`);
-    return { query, field: match };
-  });
+  const selected = selectApiFields(entry, queries);
+  const collection = collectionPath(selected[0].field.path);
+  if (selected.some(({ field }) => collectionPath(field.path) !== collection)) {
+    const paths = selected.map(({ field }) => field.path).join(", ");
+    throw new Error(`Selected JSON fields do not share the same collection: ${paths}. Select fields from the same array/object branch.`);
+  }
+
   const rows = new Map<number, Record<string, unknown>>();
-  for (const { query, field } of selected) {
+  for (const { field } of selected) {
     const values = selectApiPath(entry.value, parseApiPath(field.path));
     values.slice(0, limit).forEach((value, index) => {
       const row = rows.get(index) ?? {};
@@ -225,15 +253,20 @@ export function selectApiResponse(service: string, responseId: string, queries: 
       rows.set(index, row);
     });
   }
-  const items = [...rows.values()];
-  while (items.length > 1 && Buffer.byteLength(JSON.stringify(items), "utf8") > API_EXTRACT_MAX_BYTES) items.pop();
+
+  let items = [...rows.values()];
+  let byteLimited = false;
+  while (items.length > 1 && Buffer.byteLength(JSON.stringify(items), "utf8") > API_EXTRACT_MAX_BYTES) {
+    items = items.slice(0, -1);
+    byteLimited = true;
+  }
+
   return {
-    responseId,
     requested: queries,
     fields: selected.map(({ query, field }) => ({ query, path: field.path, name: field.name })),
     items,
     returned: items.length,
-    ...(entry.truncated || items.length < limit ? { truncated: true } : {}),
+    ...(entry.truncated || byteLimited ? { truncated: true } : {}),
   };
 }
 
