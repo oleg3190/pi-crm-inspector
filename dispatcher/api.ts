@@ -493,14 +493,17 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   const truncated = bytes.byteLength > API_RESPONSE_MAX_BYTES;
   const rawBody = new TextDecoder().decode(bytes.slice(0, API_RESPONSE_MAX_BYTES));
   const contentType = response.headers.get("content-type")?.slice(0, 256) || undefined;
-  const body = anonymizeResponseBody(rawBody, contentType, secret, input.service);
+  const scrubbedBody = scrub(rawBody, secret);
   const anonymizer = new TypeAnonymizer(secret, input.service);
+  let body = anonymizeResponseBody(rawBody, contentType, secret, input.service);
   const safeUrlValue = anonymizer.anonymize(url.toString()) as string;
-  const isJson = contentType?.toLowerCase().includes("json") || /^\s*[\[{]/.test(body);
+  const isJson = contentType?.toLowerCase().includes("json") || /^\s*[\[{]/.test(scrubbedBody);
   if (isJson) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(body) as unknown;
+      parsed = JSON.parse(scrubbedBody) as unknown;
+      parsed = anonymizer.anonymize(parsed);
+      body = JSON.stringify(parsed);
     } catch {
       // Fall through to bounded plain-text response.
     }
