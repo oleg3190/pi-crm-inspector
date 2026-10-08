@@ -342,15 +342,66 @@ export async function captureAccessibilityElements(page: Page, maxElements = MAX
     const candidates = options.mode === "all"
       ? Array.from(root.querySelectorAll("*"))
       : Array.from(root.querySelectorAll("button,a,input,select,textarea,[role],[tabindex]")).filter(isVisible);
+
+    const rectOf = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    };
+
+    const samplePointsOf = (rect: { x: number; y: number; width: number; height: number }): Array<[number, number]> => {
+      const insetX = Math.min(Math.max(rect.width * 0.08, 1), Math.max(rect.width / 2, 1));
+      const insetY = Math.min(Math.max(rect.height * 0.08, 1), Math.max(rect.height / 2, 1));
+      const left = rect.x + insetX;
+      const right = rect.x + Math.max(insetX, rect.width - insetX);
+      const top = rect.y + insetY;
+      const bottom = rect.y + Math.max(insetY, rect.height - insetY);
+      const centerX = rect.x + rect.width / 2;
+      const centerY = rect.y + rect.height / 2;
+      return [
+        [centerX, centerY],
+        [left, top],
+        [right, top],
+        [left, bottom],
+        [right, bottom],
+        [centerX, top],
+        [centerX, bottom],
+        [left, centerY],
+        [right, centerY],
+      ];
+    };
+
     return candidates.slice(0, options.maxElements).map((element) => {
       const kind = kindOf(element);
       const formControl = element as HTMLInputElement | HTMLButtonElement | HTMLSelectElement;
+      const selector = stableSelector(element);
+      const visible = isVisible(element);
+      const style = getComputedStyle(element);
+      const rect = rectOf(element);
+      const occluders = new Map<string, string>();
+
+      if (visible && rect.width > 0 && rect.height > 0) {
+        for (const [x, y] of samplePointsOf(rect)) {
+          const hit = document.elementFromPoint(x, y);
+          if (!hit || hit === element || element.contains(hit)) continue;
+          if (!(hit instanceof Element) || !root.contains(hit)) continue;
+          const hitSelector = stableSelector(hit);
+          if (hitSelector !== selector) occluders.set(hitSelector, hitSelector);
+        }
+      }
+
       const item: InspectElement = {
         kind,
-        selector: stableSelector(element),
+        selector,
         role: element.getAttribute("role") || undefined,
         name: nameOf(element),
-        visible: isVisible(element),
+        visible,
+        geometry: {
+          ...rect,
+          visible,
+          zIndex: style.zIndex,
+          position: style.position,
+          ...(occluders.size > 0 ? { occluded: true, occludedBy: [...occluders.values()].slice(0, 8) } : {}),
+        },
       };
       if ("disabled" in formControl) item.enabled = !(formControl as HTMLInputElement).disabled;
       if ("checked" in formControl && typeof (formControl as HTMLInputElement).checked === "boolean") item.checked = (formControl as HTMLInputElement).checked;
