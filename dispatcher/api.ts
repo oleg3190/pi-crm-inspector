@@ -9,12 +9,14 @@ export const ApiRequestParametersSchema = Type.Object({
 });
 
 export const ApiFindFieldsParametersSchema = Type.Object({
+  service: Type.String({ minLength: 1, maxLength: 64 }),
   responseId: Type.String({ minLength: 1, maxLength: 128 }),
   query: Type.String({ minLength: 1, maxLength: 128 }),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
 });
 
 export const ApiExtractParametersSchema = Type.Object({
+  service: Type.String({ minLength: 1, maxLength: 64 }),
   responseId: Type.String({ minLength: 1, maxLength: 128 }),
   paths: Type.Array(Type.String({ minLength: 2, maxLength: 512 }), { minItems: 1, maxItems: 32 }),
   limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
