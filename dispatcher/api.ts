@@ -491,8 +491,13 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
   const safeUrlValue = anonymizer.anonymize(url.toString()) as string;
   const isJson = contentType?.toLowerCase().includes("json") || /^\s*[\[{]/.test(body);
   if (isJson) {
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(body) as unknown;
+      parsed = JSON.parse(body) as unknown;
+    } catch {
+      // Fall through to bounded plain-text response.
+    }
+    if (parsed !== undefined) {
       const fields = buildApiSchema(parsed).slice(0, API_SCHEMA_MAX_FIELDS);
       const responseId = storeApiResponse(input.service, parsed, fields, valueType(parsed), truncated);
       const selected = input.select?.length
@@ -508,8 +513,6 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
         ...(truncated ? { truncated: true } : {}),
         anonymized: true,
       };
-    } catch {
-      // Fall through to bounded plain-text response.
     }
   }
   return {
