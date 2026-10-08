@@ -117,4 +117,4 @@ Then use `crm_api_extract` with the returned JSON paths:
 }
 ```
 
-The response store is bounded and expires after 10 minutes. Handles are bound to their CRM service. Extraction is capped at 100 rows and 32 KiB. Supported paths use a restricted JSONPath subset: object properties, numeric array indexes, and `[*]`. This prevents large unrelated CRM objects from entering the model context.
+The response store is bounded and expires after 10 minutes. It is capped at 64 handles and 16 MiB total stored JSON. Handles are bound to their CRM service. Schema discovery is capped at 512 fields, depth 16, and 10,000 visited nodes. Extraction is capped at 100 rows and 32 KiB and returns compact objects keyed by the selected field names. Supported paths use a restricted JSONPath subset: object properties, numeric array indexes, and `[*]`. This prevents large unrelated CRM objects from entering the model context.
