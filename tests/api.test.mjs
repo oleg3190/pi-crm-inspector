@@ -173,8 +173,10 @@ test("large JSON responses return a handle and compact schema instead of the ful
     assert.equal(typeof result.responseId, "string");
     assert.equal(result.body, undefined);
     assert.ok(result.schema);
-    assert.ok(result.schema.fields.some((field) => field.path === "$.customers[*].email"));
-    assert.ok(result.schema.fields.some((field) => field.path === "$.customers[*].profile.city"));
+    assert.ok(result.schema.fields.length <= 96);
+    assert.equal(result.schema.fields.some((field) => field.path === "$.customers[*].email"), true);
+    assert.equal(result.schema.fields.some((field) => field.path === "$.customers[*].profile.city"), true);
+    assert.equal(result.schema.fields.every((field) => !("example" in field)), true);
     const matches = findApiResponseFields("customers", result.responseId, "email");
     assert.deepEqual(matches.matches.map((field) => field.path), ["$.customers[*].email"]);
     const extracted = extractApiResponse("customers", result.responseId, ["$.customers[*].id", "$.customers[*].email"], 3);
@@ -420,6 +422,34 @@ test("API request refuses redirects instead of following an untrusted location",
     assert.equal(seen.redirect, "error");
     assert.equal(result.status, 302);
     assert.equal(result.body, "");
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+
+test("large JSON schema omits object branches and caps agent-facing metadata", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const payload = {
+    data: {
+      service: {
+        types: Object.fromEntries(Array.from({ length: 300 }, (_, i) => [String(i + 1), "type-" + i])),
+        statuses: { 1: "Disabled", 2: "Active" },
+      },
+      client: { id: 42, email: "client@example.com" },
+    },
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/large" });
+    assert.ok(result.schema);
+    assert.equal(result.schema.fields.length, 96);
+    assert.equal(result.schema.truncated, true);
+    assert.equal(result.schema.fields.some((field) => field.type === "object" || field.type === "array"), false);
+    assert.equal(result.schema.fields.every((field) => !("example" in field)), true);
+    assert.equal(result.body, undefined);
   } finally {
     globalThis.fetch = oldFetch;
     restore.reverse().forEach((fn) => fn());

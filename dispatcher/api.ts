@@ -30,6 +30,7 @@ const API_RESPONSE_STORE_MAX = 64;
 const API_RESPONSE_STORE_MAX_BYTES = 16 * 1024 * 1024;
 const API_RESPONSE_TTL_MS = 10 * 60 * 1000;
 const API_SCHEMA_MAX_FIELDS = 512;
+const API_AGENT_SCHEMA_MAX_FIELDS = 96;
 const API_SCHEMA_MAX_DEPTH = 16;
 const API_SCHEMA_MAX_NODES = 10_000;
 const API_EXTRACT_MAX_BYTES = 32 * 1024;
@@ -130,6 +131,17 @@ function buildApiSchema(value: unknown, path = "$", fields: ApiField[] = [], dep
     if (fields.length >= API_SCHEMA_MAX_FIELDS || state.nodes >= API_SCHEMA_MAX_NODES) break;
   }
   return fields;
+}
+
+function compactApiSchema(fields: ApiField[]): { fields: ApiField[]; truncated: boolean } {
+  const leafFields = fields.filter((field) => field.type !== "object" && field.type !== "array");
+  const compact = leafFields.slice(0, API_AGENT_SCHEMA_MAX_FIELDS).map(({ path, name, type, itemType }) => ({
+    path,
+    name,
+    type,
+    ...(itemType ? { itemType } : {}),
+  }));
+  return { fields: compact, truncated: compact.length < leafFields.length };
 }
 
 function cleanupApiResponses(): void {
@@ -518,7 +530,19 @@ export async function executeApiRequest(input: ApiRequestInput): Promise<ApiRequ
         statusText: response.statusText,
         url: safeUrlValue,
         contentType,
-        ...(selected ? { selected } : { responseId, schema: { type: valueType(parsed), fields, ...(truncated ? { truncated: true } : {}) } }),
+        ...(selected
+          ? { selected }
+          : (() => {
+              const compact = compactApiSchema(fields);
+              return {
+                responseId,
+                schema: {
+                  type: valueType(parsed),
+                  fields: compact.fields,
+                  ...(truncated || compact.truncated ? { truncated: true } : {}),
+                },
+              };
+            })()),
         ...(!selected && Buffer.byteLength(body, "utf8") <= API_RESPONSE_INLINE_MAX_BYTES ? { body } : {}),
         ...(truncated ? { truncated: true } : {}),
         anonymized: true,
