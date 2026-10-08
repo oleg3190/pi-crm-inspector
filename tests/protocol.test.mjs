@@ -192,6 +192,11 @@ test("inspect result protocol accepts compact diagnostics summary and failed net
     securityEvents: [], diagnosticsSummary: { actionCount: 0, actionsPassed: 0, assertionCount: 0, assertionsPassed: 0, failedAssertions: 0, networkRequests: 1, failedNetworkRequests: 1, consoleErrors: 0, pageErrors: 0, checkpoints: 0 },
     droppedEvents: 0,
   };
+  assert.equal(isInspectResult({ ...result, elements: [] }), true);
+  const element = result.elements[0];
+  assert.equal(typeof element.geometry, "object");
+  assert.equal((element.geometry).zIndex, "1000");
+  assert.equal((element.geometry).position, "fixed");
   assert.equal(isInspectResult(result), true);
 });
 
