@@ -112,4 +112,4 @@ For large JSON responses, the agent can request only the fields it needs in the 
 
 `select` accepts field names or business concepts (for example `email`, `customer id`, `status`, `created date`, or `total`). The runtime resolves them against the response schema and returns compact items plus the matched paths. This is the normal agent workflow; the response-handle/schema helpers remain internal implementation details rather than separate agent tools.
 
-Selection is bounded to 32 requested fields, 100 returned items, and 32 KiB of extracted JSON. If the API response itself exceeds 256 KiB, the agent must use the CRM API's pagination mechanism instead of reconstructing the full dataset.
+Selection is bounded to 32 requested fields, 100 returned items, and 32 KiB of extracted JSON. Non-JSON responses remain bounded text and are not schema-inspected. If the API response itself exceeds 256 KiB, the agent must use the CRM API's pagination mechanism instead of reconstructing the full dataset.
