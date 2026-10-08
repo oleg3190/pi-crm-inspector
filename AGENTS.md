@@ -126,11 +126,11 @@ API-ключ/токен выбирается и добавляется runtime �
 
 ### API response field inspection
 
-После `crm_api_request` для JSON-ответов сначала используй возвращённый `responseId` и компактную `schema`, а не запрашивай полный body.
+После `crm_api_request` для JSON-ответов сначала используй возвращённый `responseId (advanced inspection only)` и компактную `schema`, а не запрашивай полный body.
 
-- `crm_api_find_fields` — найти нужные поля по имени или бизнес-смыслу (например `email`, `customer id`, `status`);
-- `crm_api_extract` — получить только выбранные JSON paths и ограниченное число строк;
-- используй paths из результата `crm_api_find_fields`, например `$.customers[*].email`;
+- `crm_api_request select` — найти нужные поля по имени или бизнес-смыслу (например `email`, `customer id`, `status`);
+- `crm_api_request select` — получить только выбранные JSON paths и ограниченное число строк;
+- используй paths из результата `crm_api_request select`, например `$.customers[*].email`;
 - не пытайся восстановить полный response через несколько больших extraction-запросов;
 - response handle короткоживущий и привязан к сервису;
 - для больших коллекций всё равно используй pagination API, а затем field inspection/extract.
