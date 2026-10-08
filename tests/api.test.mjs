@@ -247,3 +247,56 @@ test("API schema stays bounded for deep and wide responses", async () => {
     restore.reverse().forEach((fn) => fn());
   }
 });
+
+test("API field selection rejects ambiguous field names with candidate paths", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const payload = {
+    customers: [{ email: "customer@example.com" }],
+    managers: [{ email: "manager@example.com" }],
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    await assert.rejects(
+      executeApiRequest({ service: "customers", method: "GET", path: "/v1/search", select: ["email"], limit: 3 }),
+      /Ambiguous JSON field select query: email; candidates: .*\.customers\[\*\]\.email, .*\.managers\[\*\]\.email/,
+    );
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API field selection pairs only fields from the same collection", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const payload = {
+    customers: [{ id: 1, email: "customer@example.com" }],
+    managers: [{ id: 10, email: "manager@example.com" }],
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    await assert.rejects(
+      executeApiRequest({ service: "customers", method: "GET", path: "/v1/search", select: ["customer id", "manager email"], limit: 3 }),
+      /do not share the same collection/,
+    );
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
+
+test("API field selection does not mark a short result as truncated", async () => {
+  const restore = [setEnv("PI_CRM_API_SERVICES_JSON", registry), setEnv("CUSTOMERS_API_KEY", "secret")];
+  const oldFetch = globalThis.fetch;
+  const payload = { customers: [{ email: "customer@example.com", status: "active" }] };
+  globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const result = await executeApiRequest({ service: "customers", method: "GET", path: "/v1/search", select: ["email", "status"], limit: 10 });
+    assert.equal(result.selected.returned, 1);
+    assert.equal(result.selected.truncated, undefined);
+  } finally {
+    globalThis.fetch = oldFetch;
+    restore.reverse().forEach((fn) => fn());
+  }
+});
