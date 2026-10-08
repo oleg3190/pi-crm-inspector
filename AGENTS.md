@@ -122,3 +122,15 @@ API-ключ/токен выбирается и добавляется runtime �
 - Не считай нерелевантный `console`, `pageErrors` или `requestFailures` ошибкой.
 - Не пытайся исправлять диагностический шум, который не объясняет наблюдаемую проблему.
 
+
+
+### API response field inspection
+
+После `crm_api_request` для JSON-ответов сначала используй возвращённый `responseId` и компактную `schema`, а не запрашивай полный body.
+
+- `crm_api_find_fields` — найти нужные поля по имени или бизнес-смыслу (например `email`, `customer id`, `status`);
+- `crm_api_extract` — получить только выбранные JSON paths и ограниченное число строк;
+- используй paths из результата `crm_api_find_fields`, например `$.customers[*].email`;
+- не пытайся восстановить полный response через несколько больших extraction-запросов;
+- response handle короткоживущий и привязан к сервису;
+- для больших коллекций всё равно используй pagination API, а затем field inspection/extract.

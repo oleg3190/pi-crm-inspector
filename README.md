@@ -94,3 +94,27 @@ CRM API responses are anonymized **before they are returned to the agent**. The 
 - the anonymization key is derived inside the runtime from the service secret and is never exposed to the agent.
 
 There is intentionally no field allowlist: unknown CRM schemas are anonymized automatically. This is a privacy boundary for agent context, not merely log redaction.
+
+
+### API response field inspection
+
+JSON responses from `crm_api_request` are stored behind a short-lived opaque `responseId`. The agent receives a compact schema instead of a large JSON body; only small JSON responses (up to 16 KiB) may also include the anonymized body inline.
+
+Use `crm_api_find_fields` to locate fields by name or business concept:
+
+```json
+{ "service": "customers", "responseId": "resp_...", "query": "customer email" }
+```
+
+Then use `crm_api_extract` with the returned JSON paths:
+
+```json
+{
+  "service": "customers",
+  "responseId": "resp_...",
+  "paths": ["$.customers[*].id", "$.customers[*].email"],
+  "limit": 20
+}
+```
+
+The response store is bounded and expires after 10 minutes. It is capped at 64 handles and 16 MiB total stored JSON. Handles are bound to their CRM service. Schema discovery is capped at 512 fields, depth 16, and 10,000 visited nodes. Extraction is capped at 100 rows and 32 KiB and returns compact objects keyed by the selected field names. Supported paths use a restricted JSONPath subset: object properties, numeric array indexes, and `[*]`. This prevents large unrelated CRM objects from entering the model context.
