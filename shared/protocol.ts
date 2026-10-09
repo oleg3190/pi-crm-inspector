@@ -594,7 +594,7 @@ function isInspectElement(value: unknown): value is InspectElement {
       geometry.occludedBy !== undefined &&
       (!Array.isArray(geometry.occludedBy) ||
         geometry.occludedBy.length > 8 ||
-        !geometry.occludedBy.every((candidate) => typeof candidate === "string" && candidate.length > 2048))
+        !geometry.occludedBy.every((candidate) => typeof candidate === "string" && candidate.length <= 2048))
     ) return false;
   }
   return true;
