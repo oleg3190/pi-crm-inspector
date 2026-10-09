@@ -65,6 +65,7 @@ test("identifier-like keys are preserved without protecting unrelated names", ()
     documentId: "D-123",
     id_number: "N-123",
     idNumber: "AB-123",
+    idToken: "sensitive-token-123",
     valid: "should be anonymized",
     candidate: "should also be anonymized",
   });
@@ -75,8 +76,22 @@ test("identifier-like keys are preserved without protecting unrelated names", ()
   assert.equal(result.documentId, "D-123");
   assert.equal(result.id_number, "N-123");
   assert.equal(result.idNumber, "AB-123");
+  assert.equal(result.idToken, "[REDACTED]");
   assert.equal(result.valid, "xxxxxx xx xxxxxxxxxx");
   assert.equal(result.candidate, "xxxxxx xxxx xx xxxxxxxxxx");
+});
+
+
+test("identifier arrays preserve scalar IDs but anonymize nested objects and sensitive fields", () => {
+  const source = JSON.stringify({
+    ids: ["cust-123", { id: "record-456", displayName: "Alice Smith", idToken: "secret-token" }],
+  });
+  const result = JSON.parse(anonymizeNetworkDiagnosticBody(source, "application/json"));
+  assert.equal(result.ids[0], "cust-123");
+  assert.equal(result.ids[1].id, "record-456");
+  assert.equal(result.ids[1].displayName, "xxxxx xxxxx");
+  assert.equal(result.ids[1].idToken, "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(result), /Alice|Smith|secret-token/);
 });
 
 test("numeric anonymization preserves negative signs, decimals, exponent notation, and number types", () => {
@@ -84,7 +99,8 @@ test("numeric anonymization preserves negative signs, decimals, exponent notatio
   const result = JSON.parse(anonymizeNetworkDiagnosticBody(source, "application/json"));
   assert.equal(result.negative, -777);
   assert.equal(result.decimal, -77.77);
-  assert.equal(result.scientific, 7.77e+45);
+  assert.equal(result.scientific, 7.77e+77);
+  assert.doesNotMatch(JSON.stringify(result), /45/);
   assert.equal(result.zero, 7);
   assert.equal(typeof result.negative, "number");
 });
