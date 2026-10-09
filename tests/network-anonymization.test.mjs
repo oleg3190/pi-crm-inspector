@@ -75,7 +75,7 @@ test("identifier-like keys are preserved without protecting unrelated names", ()
   assert.equal(result.documentId, "D-123");
   assert.equal(result.id_number, "N-123");
   assert.equal(result.idNumber, "AB-123");
-  assert.equal(result.valid, "xxxxxx xx xxxxxxxxxx");
+  assert.equal(result.valid, "xxxxx xx xxxxxxxxxx");
   assert.equal(result.candidate, "xxxxxxxxx xx xxxxxxxxxx");
 });
 
