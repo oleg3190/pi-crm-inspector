@@ -96,6 +96,11 @@ CRM API responses are anonymized **before they are returned to the agent**. The 
 There is intentionally no field allowlist: unknown CRM schemas are anonymized automatically. This is a privacy boundary for agent context, not merely log redaction.
 
 
+### Visual layout diagnostics
+
+`inspect_crm_page` includes per-element visual layout metadata for elements in the capture: viewport geometry (`x`, `y`, `width`, `height`), computed `position`/`zIndex`, and `occludedBy` selectors when the element is actually covered at sampled points.
+
+Agents should use `occludedBy` as the primary signal for overlap/stacking problems and `zIndex` as supporting CSS information; visual paint order can differ across stacking contexts.
 ### API response field selection
 
 For large JSON responses, the agent can request only the fields it needs in the same `crm_api_request` call. The runtime still anonymizes and bounds the full response internally, but only the selected compact data is returned to the agent.

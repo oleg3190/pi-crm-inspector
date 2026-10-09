@@ -186,10 +186,54 @@ test("inspect result protocol accepts compact diagnostics summary and failed net
   const { isInspectResult } = await import("../shared/protocol.ts");
   const result = {
     status: "success", traceId: "trace", pageId: "dashboard", durationMs: 10,
-    pageText: "", domSnapshot: "", interactions: [], assertions: [], assertionsPassed: true, elements: [],
+    pageText: "", domSnapshot: "", interactions: [], assertions: [], assertionsPassed: true,
+    elements: [{
+      kind: "button",
+      selector: "button:nth-of-type(1)",
+      role: "button",
+      name: "ipsum",
+      visible: true,
+      geometry: {
+        x: 100, y: 200, width: 120, height: 40, visible: true,
+        zIndex: "1000",
+        position: "fixed",
+        occluded: true,
+        occludedBy: ["div:nth-of-type(2)"],
+      },
+    }],
     console: [], pageErrors: [], requestFailures: [],
     networkRequests: [{ id: "req", timestamp: new Date().toISOString(), method: "GET", url: "https://crm.example.test/api/fail", status: 500, failed: true, error: "server error" }],
     securityEvents: [], diagnosticsSummary: { actionCount: 0, actionsPassed: 0, assertionCount: 0, assertionsPassed: 0, failedAssertions: 0, networkRequests: 1, failedNetworkRequests: 1, consoleErrors: 0, pageErrors: 0, checkpoints: 0 },
+    droppedEvents: 0,
+  };
+  assert.equal(isInspectResult(result), true);
+  assert.equal(result.elements[0].geometry.zIndex, "1000");
+  assert.equal(result.elements[0].geometry.position, "fixed");
+});
+
+
+test("inspect result accepts visual layout diagnostics on elements", async () => {
+  const { isInspectResult } = await import("../shared/protocol.ts");
+  const result = {
+    status: "success", traceId: "trace", pageId: "dashboard", durationMs: 10,
+    pageText: "", domSnapshot: "", interactions: [], assertions: [], assertionsPassed: true,
+    elements: [{
+      kind: "button",
+      selector: "button:nth-of-type(1)",
+      role: "button",
+      name: "ipsum",
+      visible: true,
+      geometry: {
+        x: 100, y: 200, width: 120, height: 40, visible: true,
+        zIndex: "1000",
+        position: "fixed",
+        occluded: true,
+        occludedBy: ["div:nth-of-type(2)"],
+      },
+    }],
+    console: [], pageErrors: [], requestFailures: [], networkRequests: [],
+    checkpoints: [], securityEvents: [],
+    diagnosticsSummary: { actionCount: 0, actionsPassed: 0, assertionCount: 0, assertionsPassed: 0, failedAssertions: 0, networkRequests: 0, failedNetworkRequests: 0, consoleErrors: 0, pageErrors: 0, checkpoints: 0 },
     droppedEvents: 0,
   };
   assert.equal(isInspectResult(result), true);

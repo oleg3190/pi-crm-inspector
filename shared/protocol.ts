@@ -224,6 +224,12 @@ export type InspectElement = {
   enabled?: boolean;
   checked?: boolean;
   expanded?: boolean;
+  geometry?: InspectGeometry & {
+    zIndex: string;
+    position: string;
+    occluded?: boolean;
+    occludedBy?: string[];
+  };
 };
 
 export type InspectScreenshot = {
@@ -564,13 +570,32 @@ function isInspectElement(value: unknown): value is InspectElement {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
   if (![ "button", "link", "input", "select", "textarea", "checkbox", "combobox", "other" ].includes(String(item.kind))) return false;
-  if (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 1024) return false;
+  if (typeof item.selector !== "string" || item.selector.length === 0 || item.selector.length > 2048) return false;
+  if (item.role !== undefined && (typeof item.role !== "string" || item.role.length > 64)) return false;
+  if (item.name !== undefined && (typeof item.name !== "string" || item.name.length > 160)) return false;
   if (typeof item.visible !== "boolean") return false;
-  for (const key of ["role", "name"]) {
-    if (key in item && item[key] !== undefined && typeof item[key] !== "string") return false;
-  }
   for (const key of ["enabled", "checked", "expanded"]) {
     if (key in item && item[key] !== undefined && typeof item[key] !== "boolean") return false;
+  }
+  if (item.geometry !== undefined) {
+    if (!item.geometry || typeof item.geometry !== "object" || Array.isArray(item.geometry)) return false;
+    const geometry = item.geometry as Record<string, unknown>;
+    if (
+      typeof geometry.x !== "number" || !Number.isFinite(geometry.x) ||
+      typeof geometry.y !== "number" || !Number.isFinite(geometry.y) ||
+      typeof geometry.width !== "number" || !Number.isFinite(geometry.width) || geometry.width < 0 ||
+      typeof geometry.height !== "number" || !Number.isFinite(geometry.height) || geometry.height < 0 ||
+      typeof geometry.visible !== "boolean" ||
+      typeof geometry.zIndex !== "string" || geometry.zIndex.length > 64 ||
+      typeof geometry.position !== "string" || geometry.position.length > 32
+    ) return false;
+    if (geometry.occluded !== undefined && typeof geometry.occluded !== "boolean") return false;
+    if (
+      geometry.occludedBy !== undefined &&
+      (!Array.isArray(geometry.occludedBy) ||
+        geometry.occludedBy.length > 8 ||
+        !geometry.occludedBy.every((candidate) => typeof candidate === "string" && candidate.length <= 2048))
+    ) return false;
   }
   return true;
 }
@@ -617,7 +642,6 @@ function isInspectNetworkRequest(value: unknown): value is InspectNetworkRequest
   if(item.failed!==undefined && typeof item.failed!=="boolean") return false;
   return true;
 }
-
 function isCommonResultFields(value: Record<string, unknown>, requirePageText: boolean): boolean {
   if(!isPageId(value.pageId) || !isFiniteNonNegativeInteger(value.durationMs)) return false;
   if(requirePageText && (typeof value.pageText!=="string" || value.pageText.length>65_536)) return false;
