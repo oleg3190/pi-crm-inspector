@@ -35,7 +35,7 @@ function isSensitiveField(key: string): boolean {
 }
 
 function anonymizeDiagnosticString(value: string): string {
-  return value.replace(/\\d/gu, "7").replace(/[\\p{L}\\p{M}]/gu, "x");
+  return value.split("[REDACTED]").map((part) => part.replace(/\\d/gu, "7").replace(/[\\p{L}\\p{M}]/gu, "x")).join("[REDACTED]");
 }
 
 function anonymizeDiagnosticNumber(value: number): number {
