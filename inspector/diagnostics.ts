@@ -24,6 +24,60 @@ function isTextContentType(contentType: string | undefined): boolean {
     || value.includes("graphql");
 }
 
+function isIdentifierField(key: string): boolean {
+  return /(?:^|[_-])ids?(?:$|[_-])/i.test(key)
+    || /(?:Id|ID)s?$/.test(key)
+    || /^id[A-Z_]/.test(key);
+}
+
+function isSensitiveField(key: string): boolean {
+  return /^(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|authorization|cookie|set-cookie)$/i.test(key);
+}
+
+function anonymizeDiagnosticString(value: string): string {
+  return value.replace(/\\d/gu, "7").replace(/[\\p{L}\\p{M}]/gu, "x");
+}
+
+function anonymizeDiagnosticNumber(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  const source = String(value);
+  const exponentIndex = source.search(/[eE]/);
+  const mantissa = exponentIndex < 0 ? source : source.slice(0, exponentIndex);
+  const exponent = exponentIndex < 0 ? "" : source.slice(exponentIndex);
+  const masked = mantissa.replace(/\\d/gu, "7") + exponent;
+  const result = Number(masked);
+  return Number.isFinite(result) ? result : value;
+}
+
+/**
+ * Anonymizes only the diagnostic copy of a network payload. The actual browser
+ * response/request is never modified. JSON keys and structure remain intact;
+ * booleans, nulls, and values under identifier-like keys are preserved.
+ */
+export function anonymizeNetworkDiagnosticBody(value: string, contentType?: string): string {
+  const scrubbed = scrubSecrets(value, []);
+  if (contentType?.toLowerCase().includes("json") || /^[\\s]*[\\[{]/u.test(scrubbed)) {
+    try {
+      const anonymizeValue = (item: unknown, key = ""): unknown => {
+        if (isSensitiveField(key)) return "[REDACTED]";
+        if (item === null || typeof item === "boolean") return item;
+        if (typeof item === "string") return isIdentifierField(key) ? item : anonymizeDiagnosticString(item);
+        if (typeof item === "number") return isIdentifierField(key) ? item : anonymizeDiagnosticNumber(item);
+        if (Array.isArray(item)) return item.map((child) => anonymizeValue(child));
+        if (typeof item === "object") {
+          return Object.fromEntries(Object.entries(item as Record<string, unknown>)
+            .map(([childKey, child]) => [childKey, anonymizeValue(child, childKey)]));
+        }
+        return item;
+      };
+      return JSON.stringify(anonymizeValue(JSON.parse(scrubbed)));
+    } catch {
+      // Malformed/partial JSON falls back to same-length text anonymization.
+    }
+  }
+  return anonymizeDiagnosticString(scrubbed);
+}
+
 async function readResponseBody(response: Response): Promise<{ body?: string; truncated?: boolean }> {
   const contentType = response.headers()["content-type"];
   if (!isTextContentType(contentType)) return { body: "[binary body omitted]" };
@@ -34,7 +88,7 @@ async function readResponseBody(response: Response): Promise<{ body?: string; tr
         setTimeout(() => reject(new Error("response body read timeout")), BODY_READ_TIMEOUT_MS),
       ),
     ]);
-    const text = scrubSecrets(buffer.toString("utf8"), []);
+    const text = anonymizeNetworkDiagnosticBody(buffer.toString("utf8"), contentType);
     const clipped = truncateBody(text, MAX_RESPONSE_BODY_CHARS);
     return {
       body: clipped.value,
@@ -62,7 +116,7 @@ export class NetworkRecorder {
     };
     const postData = request.postData();
     if (postData) {
-      const clipped = truncateBody(scrubSecrets(postData, []), MAX_REQUEST_BODY_CHARS);
+      const clipped = truncateBody(anonymizeNetworkDiagnosticBody(postData, request.headers()["content-type"]), MAX_REQUEST_BODY_CHARS);
       entry.requestBody = clipped.value;
       if (clipped.truncated) entry.requestBodyTruncated = true;
     }
