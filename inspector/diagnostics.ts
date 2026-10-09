@@ -61,6 +61,7 @@ export function anonymizeNetworkDiagnosticBody(value: string, contentType?: stri
       const anonymizeValue = (item: unknown, key = ""): unknown => {
         if (isSensitiveField(key)) return "[REDACTED]";
         if (item === null || typeof item === "boolean") return item;
+        if (isIdentifierField(key) && Array.isArray(item)) return item;
         if (typeof item === "string") return isIdentifierField(key) ? item : anonymizeDiagnosticString(item);
         if (typeof item === "number") return isIdentifierField(key) ? item : anonymizeDiagnosticNumber(item);
         if (Array.isArray(item)) return item.map((child) => anonymizeValue(child));
