@@ -130,7 +130,7 @@ test("NetworkRecorder anonymizes only diagnostic copies and marks oversized resp
   assert.match(entry.requestBody, /xxxx xxxxx/);
   assert.equal(entry.responseBodyTruncated, true);
   assert.equal(entry.responseBody.length, 1_024);
-  assert.match(entry.responseBody, /\\[truncated\\]$/);
+  assert.ok(entry.responseBody.endsWith("[truncated]"));
   assert.match(originalRequestBody, /Alice Smith/);
   assert.match(originalResponseBody, /Bob Jones/);
   assert.equal(request.postData(), originalRequestBody);
