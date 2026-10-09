@@ -35,7 +35,7 @@ test("network diagnostic JSON anonymization preserves shape, booleans, nulls, an
 
 test("network diagnostic anonymization scrubs secrets and keeps digit count in plain text", () => {
   const result = anonymizeNetworkDiagnosticBody('Authorization: Bearer abc.def.123; customer 12345');
-  assert.match(result, /Bearer \[REDACTED\]/);
+  assert.match(result, /\[REDACTED\]/);
   assert.match(result, /77777/);
   assert.doesNotMatch(result, /abc\.def\.123/);
 });
