@@ -31,7 +31,11 @@ function isIdentifierField(key: string): boolean {
 }
 
 function isSensitiveField(key: string): boolean {
-  return /^(?:password|passwd|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|authorization|cookie|set-cookie)$/i.test(key);
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return new Set([
+    "password", "passwd", "secret", "token", "accesstoken", "refreshtoken",
+    "idtoken", "apikey", "clientsecret", "authorization", "cookie", "setcookie",
+  ]).has(normalized);
 }
 
 function anonymizeDiagnosticString(value: string): string {
@@ -43,10 +47,14 @@ function anonymizeDiagnosticNumber(value: number): number {
   const source = String(value);
   const exponentIndex = source.search(/[eE]/);
   const mantissa = exponentIndex < 0 ? source : source.slice(0, exponentIndex);
-  const exponent = exponentIndex < 0 ? "" : source.slice(exponentIndex);
-  const masked = mantissa.replace(/\d/gu, "7") + exponent;
-  const result = Number(masked);
-  return Number.isFinite(result) ? result : value;
+  const exponent = exponentIndex < 0 ? "" : source.slice(exponentIndex).replace(/\d/gu, "7");
+  const maskedMantissa = mantissa.replace(/\d/gu, "7");
+  const result = Number(maskedMantissa + exponent);
+  if (Number.isFinite(result)) return result;
+  // Keep the number finite without retaining any original exponent digits.
+  const safeExponent = exponent.replace(/\d/gu, "0");
+  const safeResult = Number(maskedMantissa + safeExponent);
+  return Number.isFinite(safeResult) ? safeResult : 7;
 }
 
 /**
@@ -61,7 +69,12 @@ export function anonymizeNetworkDiagnosticBody(value: string, contentType?: stri
       const anonymizeValue = (item: unknown, key = ""): unknown => {
         if (isSensitiveField(key)) return "[REDACTED]";
         if (item === null || typeof item === "boolean") return item;
-        if (isIdentifierField(key) && Array.isArray(item)) return item;
+        if (isIdentifierField(key) && Array.isArray(item)) {
+          return item.map((child) => {
+            if (child !== null && typeof child === "object") return anonymizeValue(child);
+            return child;
+          });
+        }
         if (typeof item === "string") return isIdentifierField(key) ? item : anonymizeDiagnosticString(item);
         if (typeof item === "number") return isIdentifierField(key) ? item : anonymizeDiagnosticNumber(item);
         if (Array.isArray(item)) return item.map((child) => anonymizeValue(child));
