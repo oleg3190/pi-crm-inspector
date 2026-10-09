@@ -35,7 +35,7 @@ function isSensitiveField(key: string): boolean {
 }
 
 function anonymizeDiagnosticString(value: string): string {
-  return value.split("[REDACTED]").map((part) => part.replace(/\\d/gu, "7").replace(/[\\p{L}\\p{M}]/gu, "x")).join("[REDACTED]");
+  return value.split("[REDACTED]").map((part) => part.replace(/\d/gu, "7").replace(/[\p{L}\p{M}]/gu, "x")).join("[REDACTED]");
 }
 
 function anonymizeDiagnosticNumber(value: number): number {
@@ -44,7 +44,7 @@ function anonymizeDiagnosticNumber(value: number): number {
   const exponentIndex = source.search(/[eE]/);
   const mantissa = exponentIndex < 0 ? source : source.slice(0, exponentIndex);
   const exponent = exponentIndex < 0 ? "" : source.slice(exponentIndex);
-  const masked = mantissa.replace(/\\d/gu, "7") + exponent;
+  const masked = mantissa.replace(/\d/gu, "7") + exponent;
   const result = Number(masked);
   return Number.isFinite(result) ? result : value;
 }
@@ -56,7 +56,7 @@ function anonymizeDiagnosticNumber(value: number): number {
  */
 export function anonymizeNetworkDiagnosticBody(value: string, contentType?: string): string {
   const scrubbed = scrubSecrets(value, []);
-  if (contentType?.toLowerCase().includes("json") || /^[\\s]*[\\[{]/u.test(scrubbed)) {
+  if (contentType?.toLowerCase().includes("json") || /^[\s]*[\\[{]/u.test(scrubbed)) {
     try {
       const anonymizeValue = (item: unknown, key = ""): unknown => {
         if (isSensitiveField(key)) return "[REDACTED]";
@@ -115,8 +115,9 @@ export class NetworkRecorder {
       resourceType: request.resourceType(),
     };
     const postData = request.postData();
+    const requestHeaders = typeof request.headers === "function" ? request.headers() : {};
     if (postData) {
-      const clipped = truncateBody(anonymizeNetworkDiagnosticBody(postData, request.headers()["content-type"]), MAX_REQUEST_BODY_CHARS);
+      const clipped = truncateBody(anonymizeNetworkDiagnosticBody(postData, requestHeaders["content-type"]), MAX_REQUEST_BODY_CHARS);
       entry.requestBody = clipped.value;
       if (clipped.truncated) entry.requestBodyTruncated = true;
     }
