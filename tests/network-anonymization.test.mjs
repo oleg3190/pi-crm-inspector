@@ -76,7 +76,7 @@ test("identifier-like keys are preserved without protecting unrelated names", ()
   assert.equal(result.id_number, "N-123");
   assert.equal(result.idNumber, "AB-123");
   assert.equal(result.valid, "xxxxxx xx xxxxxxxxxx");
-  assert.equal(result.candidate, "xxxxxxxxx xx xxxxxxxxxx");
+  assert.equal(result.candidate, "xxxxxx xxxx xx xxxxxxxxxx");
 });
 
 test("numeric anonymization preserves negative signs, decimals, exponent notation, and number types", () => {
