@@ -75,8 +75,8 @@ test("identifier-like keys are preserved without protecting unrelated names", ()
   assert.equal(result.documentId, "D-123");
   assert.equal(result.id_number, "N-123");
   assert.equal(result.idNumber, "AB-123");
-  assert.equal(result.valid, "xxxxx be xxxxxxxxxx");
-  assert.equal(result.candidate, "xxxxxxxxx be xxxxxxxxxx");
+  assert.equal(result.valid, "xxxxxx xx xxxxxxxxxx");
+  assert.equal(result.candidate, "xxxxxxxxx xx xxxxxxxxxx");
 });
 
 test("numeric anonymization preserves negative signs, decimals, exponent notation, and number types", () => {
@@ -103,7 +103,7 @@ test("sensitive JSON fields are redacted, including nested values", () => {
 
 test("NetworkRecorder anonymizes only diagnostic copies and marks oversized response bodies truncated", async () => {
   const originalRequestBody = JSON.stringify({ customerName: "Alice Smith", customerId: "cust-123" });
-  const originalResponseBody = JSON.stringify({ displayName: "Bob Jones", enabled: true }) + " ".repeat(1_500);
+  const originalResponseBody = JSON.stringify({ displayName: "Bob Jones", enabled: true, details: "A".repeat(1_500) });
   const request = {
     method: () => "POST",
     url: () => "https://crm.example.test/api/customers",
