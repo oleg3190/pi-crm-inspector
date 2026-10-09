@@ -35,7 +35,7 @@ An action-local assertion failure automatically captures a checkpoint by default
 
 The inspector records the latest 100 authenticated requests with method, sanitized URL, resource type, status, duration, bounded request body, bounded response body, and failure text.
 Request bodies are capped at 8 KiB; response bodies at about 1 KiB.
-Sensitive query parameters, credentials, authorization tokens, cookies, and common secret fields are redacted before the result is emitted. Binary response bodies are not decoded.
+Sensitive query parameters, credentials, authorization tokens, cookies, and common secret fields are redacted before the result is emitted. Network request/response bodies are anonymized only in the diagnostic copy: JSON keys and structure remain unchanged, booleans and nulls are preserved, identifier-like fields (`id`, `userId`, `document_id`, `idNumber`, etc.) retain their values, and other text/digits are replaced character-for-character so digit counts and payload shape remain stable. The actual browser request and response are never modified. Unparseable text is anonymized character-for-character; binary response bodies are not decoded.
 
 ## Output compaction
 
