@@ -24,6 +24,74 @@ function isTextContentType(contentType: string | undefined): boolean {
     || value.includes("graphql");
 }
 
+function isIdentifierField(key: string): boolean {
+  return /(?:^|[_-])ids?(?:$|[_-])/i.test(key)
+    || /(?:Id|ID)s?$/.test(key)
+    || /^id[A-Z_]/.test(key);
+}
+
+function isSensitiveField(key: string): boolean {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return new Set([
+    "password", "passwd", "secret", "token", "accesstoken", "refreshtoken",
+    "idtoken", "apikey", "clientsecret", "authorization", "cookie", "setcookie",
+  ]).has(normalized);
+}
+
+function anonymizeDiagnosticString(value: string): string {
+  return value.split("[REDACTED]").map((part) => part.replace(/\d/gu, "7").replace(/[\p{L}\p{M}]/gu, "x")).join("[REDACTED]");
+}
+
+function anonymizeDiagnosticNumber(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  const source = String(value);
+  const exponentIndex = source.search(/[eE]/);
+  const mantissa = exponentIndex < 0 ? source : source.slice(0, exponentIndex);
+  const exponent = exponentIndex < 0 ? "" : source.slice(exponentIndex).replace(/\d/gu, "7");
+  const maskedMantissa = mantissa.replace(/\d/gu, "7");
+  const result = Number(maskedMantissa + exponent);
+  if (Number.isFinite(result)) return result;
+  // Keep the number finite without retaining any original exponent digits.
+  const safeExponent = exponent.replace(/\d/gu, "0");
+  const safeResult = Number(maskedMantissa + safeExponent);
+  return Number.isFinite(safeResult) ? safeResult : 7;
+}
+
+/**
+ * Anonymizes only the diagnostic copy of a network payload. The actual browser
+ * response/request is never modified. JSON keys and structure remain intact;
+ * booleans, nulls, and values under identifier-like keys are preserved.
+ */
+export function anonymizeNetworkDiagnosticBody(value: string, contentType?: string): string {
+  const scrubbed = scrubSecrets(value, []);
+  if (contentType?.toLowerCase().includes("json") || /^[\s]*[\\[{]/u.test(scrubbed)) {
+    try {
+      const anonymizeValue = (item: unknown, key = ""): unknown => {
+        if (isSensitiveField(key)) return "[REDACTED]";
+        if (item === null || typeof item === "boolean") return item;
+        if (isIdentifierField(key) && Array.isArray(item)) {
+          return item.map((child) => {
+            if (child !== null && typeof child === "object") return anonymizeValue(child);
+            return child;
+          });
+        }
+        if (typeof item === "string") return isIdentifierField(key) ? item : anonymizeDiagnosticString(item);
+        if (typeof item === "number") return isIdentifierField(key) ? item : anonymizeDiagnosticNumber(item);
+        if (Array.isArray(item)) return item.map((child) => anonymizeValue(child));
+        if (typeof item === "object") {
+          return Object.fromEntries(Object.entries(item as Record<string, unknown>)
+            .map(([childKey, child]) => [childKey, anonymizeValue(child, childKey)]));
+        }
+        return item;
+      };
+      return JSON.stringify(anonymizeValue(JSON.parse(scrubbed)));
+    } catch {
+      // Malformed/partial JSON falls back to same-length text anonymization.
+    }
+  }
+  return anonymizeDiagnosticString(scrubbed);
+}
+
 async function readResponseBody(response: Response): Promise<{ body?: string; truncated?: boolean }> {
   const contentType = response.headers()["content-type"];
   if (!isTextContentType(contentType)) return { body: "[binary body omitted]" };
@@ -34,7 +102,7 @@ async function readResponseBody(response: Response): Promise<{ body?: string; tr
         setTimeout(() => reject(new Error("response body read timeout")), BODY_READ_TIMEOUT_MS),
       ),
     ]);
-    const text = scrubSecrets(buffer.toString("utf8"), []);
+    const text = anonymizeNetworkDiagnosticBody(buffer.toString("utf8"), contentType);
     const clipped = truncateBody(text, MAX_RESPONSE_BODY_CHARS);
     return {
       body: clipped.value,
@@ -61,8 +129,9 @@ export class NetworkRecorder {
       resourceType: request.resourceType(),
     };
     const postData = request.postData();
+    const requestHeaders = typeof request.headers === "function" ? request.headers() : {};
     if (postData) {
-      const clipped = truncateBody(scrubSecrets(postData, []), MAX_REQUEST_BODY_CHARS);
+      const clipped = truncateBody(anonymizeNetworkDiagnosticBody(postData, requestHeaders["content-type"]), MAX_REQUEST_BODY_CHARS);
       entry.requestBody = clipped.value;
       if (clipped.truncated) entry.requestBodyTruncated = true;
     }
