@@ -119,9 +119,12 @@ function validateGrantQuery(query: string, role: string, databaseName: string): 
     configError("Configured GRANT must target exactly the role set in the config.");
   }
 
-  const databaseTarget = statement.match(/\bON\s+DATABASE\s+([a-z_][a-z0-9_$]*)\b/iu);
-  if (databaseTarget && databaseTarget[1] !== databaseName) {
-    configError("Configured GRANT targets a different database than databaseName.");
+  if (/\bON\s+DATABASE\b/iu.test(statement)) {
+    const databaseTarget = statement.match(/\bON\s+DATABASE\s+(?:"([^"]+)"|([a-z_][a-z0-9_$]*))(?=\s|$)/iu);
+    const targetName = databaseTarget?.[1] ?? databaseTarget?.[2]?.toLowerCase();
+    if (!databaseTarget || targetName !== databaseName) {
+      configError("Configured GRANT targets a different database than databaseName.");
+    }
   }
 
   return statement;
