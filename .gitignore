@@ -3,3 +3,6 @@ playwright-report/
 test-results/
 *.log
 .DS_Store
+
+# Local database permissions config contains environment-specific roles and SQL.
+config/inspector-permissions.json

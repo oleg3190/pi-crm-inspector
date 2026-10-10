@@ -4,15 +4,20 @@
   "description": "Isolated read-only CRM inspector for pi.dev",
   "type": "module",
   "private": true,
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "engines": {
     "node": ">=22.19.0"
   },
   "pi": {
-    "extensions": ["./dispatcher/index.ts"]
+    "extensions": [
+      "./dispatcher/index.ts"
+    ]
   },
   "dependencies": {
-    "playwright": "1.62.1"
+    "playwright": "1.62.1",
+    "postgres": "3.4.9"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
