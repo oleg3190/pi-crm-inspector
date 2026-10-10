@@ -44,11 +44,14 @@ type ExecuteDependencies = {
 };
 
 class PermissionsSetupError extends Error {
+  readonly code: "disabled" | "configuration_error" | "database_mismatch";
+
   constructor(
-    readonly code: "disabled" | "configuration_error" | "database_mismatch",
+    code: "disabled" | "configuration_error" | "database_mismatch",
     message: string,
   ) {
     super(message);
+    this.code = code;
   }
 }
 
