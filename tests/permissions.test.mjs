@@ -102,6 +102,7 @@ test("rejects non-GRANT SQL and grants to another database", async () => {
   for (const query of [
     "SELECT 1",
     "GRANT SELECT ON DATABASE crm_prod TO crm_test_user",
+    'GRANT CONNECT ON DATABASE "crm_prod" TO crm_test_user',
     "GRANT SELECT ON TABLE public.customers TO crm_test_user WITH GRANT OPTION",
   ]) {
     await withConfig({ ...validConfig, query }, async (configPath) => {
