@@ -17,9 +17,11 @@ import {
 import { InspectSubagentParametersSchema } from "../shared/schema.ts";
 import { APP_ORIGIN } from "../inspector/policy.ts";
 import { ApiRequestParametersSchema, executeApiRequest } from "./api.ts";
+import { InspectorPermissionsParametersSchema, executeInspectorPermissions } from "./permissions.ts";
 
 const TOOL_NAME = "crm_inspector_subagent" as const;
 const API_TOOL_NAME = "crm_api_request" as const;
+const PERMISSIONS_TOOL_NAME = "inspector_permissions" as const;
 const CHILD_GUARD_ENV = "PI_CRM_INSPECTOR_CHILD";
 const CHILD_PARENT_TRACE_ENV = "PI_CRM_INSPECTOR_PARENT_TRACE";
 const CHILD_TIMEOUT_MS = 120_000;
@@ -427,6 +429,29 @@ async function runChildWithAuthRetry(
 
 
 export default function (pi: ExtensionAPI) {
+  pi.registerTool({
+    name: PERMISSIONS_TOOL_NAME,
+    label: "Inspector Permissions",
+    description: "Apply one preconfigured GRANT statement to the explicitly configured test PostgreSQL database. No SQL or database data is returned.",
+    promptSnippet: "Set up the configured test database permissions when explicitly requested",
+    promptGuidelines: [
+      "Call inspector_permissions only when the user explicitly asks to apply the configured test-database permissions.",
+      "The tool has no arguments and executes only the single GRANT statement in the local permissions config; never invent, accept, or pass SQL, a database name, or a role.",
+      "This is a permission-changing operation. It is disabled unless PI_CRM_INSPECTOR_PERMISSIONS_ENABLED=1 is set, and it verifies the connected database name before applying the grant.",
+      "The result reports only success or a sanitized failure. Do not claim data access was verified by this operation.",
+    ],
+    executionMode: "sequential",
+    parameters: InspectorPermissionsParametersSchema,
+    async execute() {
+      const result = await executeInspectorPermissions();
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+        details: result,
+        isError: result.status !== "success",
+      };
+    },
+  });
+
   pi.registerTool({
     name: API_TOOL_NAME,
     label: "CRM API Request",
