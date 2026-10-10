@@ -1,0 +1,5 @@
+{
+  "databaseName": "crm_test",
+  "role": "crm_test_user",
+  "query": "GRANT SELECT ON TABLE public.customers TO crm_test_user;"
+}
