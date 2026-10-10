@@ -138,8 +138,8 @@ function createPostgresClient(connectionString: string): PermissionsSqlClient {
     prepare: false,
     connection: {
       application_name: "pi-crm-inspector-permissions",
-      statement_timeout: "10000",
-      lock_timeout: "5000",
+      statement_timeout: 10_000,
+      lock_timeout: 5_000,
     },
   }) as unknown as PermissionsSqlClient;
 }
