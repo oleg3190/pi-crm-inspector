@@ -1,11 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { Type } from "typebox";
 
 const ENABLED_ENV = "PI_CRM_INSPECTOR_PERMISSIONS_ENABLED";
 const DATABASE_URL_ENV = "PI_CRM_INSPECTOR_TEST_DATABASE_URL";
 const CONFIG_PATH_ENV = "PI_CRM_INSPECTOR_PERMISSIONS_CONFIG";
 const DEFAULT_CONFIG_PATH = fileURLToPath(new URL("../config/inspector-permissions.json", import.meta.url));
+
+export const InspectorPermissionsParametersSchema = Type.Object({}, {
+  additionalProperties: false,
+  description: "No inputs; execute only the local, preconfigured permissions query.",
+});
 
 export type InspectorPermissionsResult =
   | { status: "success"; operation: "grant"; anonymized: true }
