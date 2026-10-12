@@ -253,6 +253,12 @@ export const InspectDiagnosticsSchema = Type.Object({
   ),
   maxElements: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_ELEMENTS })),
   domSelector: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+  vueAnalyzer: Type.Optional(Type.Boolean({
+    description: "Auto-detect Vue. If Vue is unavailable, report no detection and continue normal DOM inspection.",
+  })),
+  dataAnalyzer: Type.Optional(Type.Boolean({
+    description: "Summarize API JSON structure and visible table dimensions without exposing response values.",
+  })),
 });
 
 export const InspectSubagentParametersSchema = Type.Object({
