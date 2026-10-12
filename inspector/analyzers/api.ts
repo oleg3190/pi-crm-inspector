@@ -173,6 +173,21 @@ export function buildPageDataAnalysis(
       sampleSize: collection.sampleSize,
     })),
   ).slice(0, 40);
+  const tables = [...visibleTables].slice(0, MAX_VISIBLE_TABLES);
+  const candidateMatches = collections.flatMap((collection) =>
+    collection.objectItemsSampled === 0
+      ? []
+      : tables
+          .filter((table) => table.rowCount === collection.itemCount)
+          .map((table) => ({
+            requestId: collection.requestId,
+            collectionPath: collection.path,
+            apiItemCount: collection.itemCount,
+            tableIndex: table.index,
+            renderedRowCount: table.rowCount,
+            confidence: "heuristic" as const,
+          })),
+  ).slice(0, 20);
 
   return {
     jsonResponses: jsonResponses.length,
@@ -180,7 +195,8 @@ export function buildPageDataAnalysis(
     invalidJsonResponses: jsonResponses.filter((request) => request.apiDataSummary?.status === "invalid_json").length,
     truncatedResponses: jsonResponses.filter((request) => request.apiDataSummary?.status === "truncated" || request.responseBodyTruncated).length,
     collections,
-    visibleTables: [...visibleTables].slice(0, MAX_VISIBLE_TABLES),
-    note: "API collection counts and rendered row counts are structural clues only; pagination, filtering, and client-side transformations can make them differ.",
+    visibleTables: tables,
+    candidateMatches,
+    note: "Matching item/row counts are heuristic candidates, not proof that an API collection feeds a table. Pagination, filtering, hidden rows, and client-side transformations can make counts differ.",
   };
 }
