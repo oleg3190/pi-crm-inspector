@@ -123,7 +123,11 @@ export class NetworkRecorder {
   private droppedEvents = 0;
   private readonly pendingResponses = new Set<Promise<void>>();
 
-  constructor(private readonly includeApiDataSummary = true) {}
+  private readonly includeApiDataSummary: boolean;
+
+  constructor(includeApiDataSummary = true) {
+    this.includeApiDataSummary = includeApiDataSummary;
+  }
 
   onRequest(request: Request): void {
     const entry: InspectNetworkRequest = {
