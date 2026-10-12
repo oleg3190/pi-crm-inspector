@@ -197,6 +197,56 @@ export type InspectDiagnosticsSummary = {
   checkpoints: number;
 };
 
+export type ApiCollectionSummary = {
+  path: string;
+  itemCount: number;
+  objectItemsSampled: number;
+  sampleSize: number;
+};
+
+export type ApiPayloadSummary = {
+  status: "analyzed" | "not_json" | "invalid_json" | "truncated";
+  byteLength: number;
+  rootType?: "object" | "array" | "string" | "number" | "boolean" | "null";
+  topLevelKeys: string[];
+  fieldPaths: string[];
+  collections: ApiCollectionSummary[];
+  fieldPathsTruncated?: boolean;
+  collectionsTruncated?: boolean;
+  scanTruncated?: boolean;
+};
+
+export type PageTableSummary = {
+  index: number;
+  kind: "table" | "aria_grid";
+  rowCount: number;
+  columnCount: number;
+};
+
+export type PageDataAnalysis = {
+  jsonResponses: number;
+  analyzedResponses: number;
+  invalidJsonResponses: number;
+  truncatedResponses: number;
+  collections: Array<ApiCollectionSummary & {
+    requestId: string;
+    status?: number;
+  }>;
+  visibleTables: PageTableSummary[];
+  note: string;
+};
+
+export type VueAnalysis = {
+  framework: "vue" | "react" | "unknown";
+  status: "analyzed" | "detected_no_component_tree" | "not_applicable" | "not_detected";
+  version?: string;
+  detectionSignals: string[];
+  componentCount?: number;
+  componentNames?: string[];
+  componentNamesTruncated?: boolean;
+  scanTruncated?: boolean;
+};
+
 export type InspectNetworkRequest = {
   id: string;
   timestamp: string;
@@ -204,6 +254,7 @@ export type InspectNetworkRequest = {
   url: string;
   resourceType?: string;
   responseContentType?: string;
+  apiDataSummary?: ApiPayloadSummary;
   status?: number;
   statusText?: string;
   durationMs?: number;
@@ -238,6 +289,10 @@ export type InspectDiagnostics = {
   elementsMode?: "interactive" | "all";
   maxElements?: number;
   domSelector?: string;
+  /** Auto-detect Vue and report bounded component metadata; true by default. */
+  vueAnalyzer?: boolean;
+  /** Summarize JSON API response structure and visible table dimensions; true by default. */
+  dataAnalyzer?: boolean;
 };
 
 export type InspectError = {
@@ -268,6 +323,8 @@ export type InspectSuccess = {
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
   networkRequests: InspectNetworkRequest[];
+  vueAnalysis?: VueAnalysis;
+  dataAnalysis?: PageDataAnalysis;
   securityEvents: SecurityEvent[];
   checkpoints?: InspectCheckpoint[];
   diagnosticsSummary: InspectDiagnosticsSummary;
