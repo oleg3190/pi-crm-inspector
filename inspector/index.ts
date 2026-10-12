@@ -36,6 +36,8 @@ import type {
   InspectDiagnostics,
   InspectCheckpoint,
   InspectGeometry,
+  VueAnalysis,
+  PageDataAnalysis,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 import { NetworkRecorder } from "./diagnostics.ts";
