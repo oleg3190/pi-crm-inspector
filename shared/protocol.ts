@@ -736,6 +736,17 @@ function isPageDataAnalysis(value: unknown): value is PageDataAnalysis {
       (collection.status === undefined || (typeof collection.status === "number" && Number.isInteger(collection.status) && collection.status >= 0 && collection.status <= 999));
   })) return false;
   if (!Array.isArray(item.visibleTables) || item.visibleTables.length > 20 || !item.visibleTables.every(isPageTableSummary)) return false;
+  if (!Array.isArray(item.candidateMatches) || item.candidateMatches.length > 20) return false;
+  if (!item.candidateMatches.every((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const match = entry as Record<string, unknown>;
+    return typeof match.requestId === "string" && match.requestId.length <= 128 &&
+      typeof match.collectionPath === "string" && match.collectionPath.length > 0 && match.collectionPath.length <= 768 &&
+      isFiniteNonNegativeInteger(match.apiItemCount) &&
+      isFiniteNonNegativeInteger(match.tableIndex) &&
+      isFiniteNonNegativeInteger(match.renderedRowCount) &&
+      match.confidence === "heuristic";
+  })) return false;
   return typeof item.note === "string" && item.note.length <= 512;
 }
 
