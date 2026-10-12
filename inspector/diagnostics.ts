@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Request, Response } from "playwright";
-import type { InspectNetworkRequest } from "../shared/protocol.ts";
+import type { ApiPayloadSummary, InspectNetworkRequest } from "../shared/protocol.ts";
+import { summarizeApiPayload } from "./analyzers/api.ts";
 import { scrubSecrets, sanitizedUrl } from "./security.ts";
 
 const MAX_NETWORK_REQUESTS = 100;
@@ -92,7 +93,7 @@ export function anonymizeNetworkDiagnosticBody(value: string, contentType?: stri
   return anonymizeDiagnosticString(scrubbed);
 }
 
-async function readResponseBody(response: Response): Promise<{ body?: string; truncated?: boolean }> {
+async function readResponseBody(response: Response, includeApiDataSummary: boolean): Promise<{ body?: string; truncated?: boolean; apiDataSummary?: ApiPayloadSummary }> {
   const contentType = response.headers()["content-type"];
   if (!isTextContentType(contentType)) return { body: "[binary body omitted]" };
   try {
@@ -102,11 +103,13 @@ async function readResponseBody(response: Response): Promise<{ body?: string; tr
         setTimeout(() => reject(new Error("response body read timeout")), BODY_READ_TIMEOUT_MS),
       ),
     ]);
+    const apiDataSummary = includeApiDataSummary ? summarizeApiPayload(buffer, contentType) : undefined;
     const text = anonymizeNetworkDiagnosticBody(buffer.toString("utf8"), contentType);
     const clipped = truncateBody(text, MAX_RESPONSE_BODY_CHARS);
     return {
       body: clipped.value,
       ...(clipped.truncated ? { truncated: true } : {}),
+      ...(apiDataSummary ? { apiDataSummary } : {}),
     };
   } catch {
     return { body: "[response body unavailable]" };
@@ -119,6 +122,8 @@ export class NetworkRecorder {
   private readonly startedAt = new Map<Request, number>();
   private droppedEvents = 0;
   private readonly pendingResponses = new Set<Promise<void>>();
+
+  constructor(private readonly includeApiDataSummary = true) {}
 
   onRequest(request: Request): void {
     const entry: InspectNetworkRequest = {
