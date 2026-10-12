@@ -126,7 +126,8 @@ export async function analyzeVuePage(page: Page): Promise<VueAnalysis> {
     } else if (vue2Root) {
       framework = "vue";
       status = "detected_no_component_tree";
-      version = typeof vue2Root.constructor?.version === "string" ? vue2Root.constructor.version : undefined;
+      const constructor = vue2Root.constructor as AnyRecord | undefined;
+      version = typeof constructor?.version === "string" ? constructor.version : undefined;
       componentCount = 0;
       visitVue2(vue2Root, 0);
       if (componentCount > 0) status = "analyzed";
