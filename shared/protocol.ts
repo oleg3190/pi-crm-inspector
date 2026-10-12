@@ -223,6 +223,15 @@ export type PageTableSummary = {
   columnCount: number;
 };
 
+export type DataCountMatch = {
+  requestId: string;
+  collectionPath: string;
+  apiItemCount: number;
+  tableIndex: number;
+  renderedRowCount: number;
+  confidence: "heuristic";
+};
+
 export type PageDataAnalysis = {
   jsonResponses: number;
   analyzedResponses: number;
@@ -233,6 +242,7 @@ export type PageDataAnalysis = {
     status?: number;
   }>;
   visibleTables: PageTableSummary[];
+  candidateMatches: DataCountMatch[];
   note: string;
 };
 
