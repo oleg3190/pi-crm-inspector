@@ -328,3 +328,74 @@ test("account-scoped inspector lock serializes concurrent same-account runs", as
     else process.env.PI_CRM_USERNAME = original;
   }
 });
+
+test("protocol guard validates bounded Vue and API data analyzer output", () => {
+  const base = {
+    status: "success",
+    traceId: "trace",
+    pageId: "dashboard",
+    durationMs: 1,
+    pageText: "ipsum",
+    domSnapshot: "<body></body>",
+    interactions: [],
+    assertions: [],
+    assertionsPassed: true,
+    elements: [],
+    console: [],
+    pageErrors: [],
+    requestFailures: [],
+    networkRequests: [{
+      id: "request-1",
+      timestamp: "2026-10-12T00:00:00.000Z",
+      method: "GET",
+      url: "https://example.invalid/api/items",
+      apiDataSummary: {
+        status: "analyzed",
+        byteLength: 128,
+        rootType: "object",
+        topLevelKeys: ["items"],
+        fieldPaths: ["$.items"],
+        collections: [{ path: "$.items", itemCount: 2, objectItemsSampled: 2, sampleSize: 2 }],
+      },
+    }],
+    vueAnalysis: {
+      framework: "vue",
+      status: "analyzed",
+      version: "3.5.2",
+      detectionSignals: ["vue3_mount_instance"],
+      componentCount: 2,
+      componentNames: ["RootApp", "CustomerTable"],
+    },
+    dataAnalysis: {
+      jsonResponses: 1,
+      analyzedResponses: 1,
+      invalidJsonResponses: 0,
+      truncatedResponses: 0,
+      collections: [{
+        requestId: "request-1",
+        status: 200,
+        path: "$.items",
+        itemCount: 2,
+        objectItemsSampled: 2,
+        sampleSize: 2,
+      }],
+      visibleTables: [{ index: 0, kind: "table", rowCount: 2, columnCount: 3 }],
+      note: "Counts are structural clues only.",
+    },
+    securityEvents: [],
+    droppedEvents: 0,
+  };
+
+  assert.equal(isInspectResult(base), true);
+  assert.equal(isInspectResult({
+    ...base,
+    vueAnalysis: { ...base.vueAnalysis, componentNames: Array.from({ length: 100 }, (_, index) => String(index)) },
+  }), false);
+  assert.equal(isInspectResult({
+    ...base,
+    networkRequests: [{
+      ...base.networkRequests[0],
+      apiDataSummary: { ...base.networkRequests[0].apiDataSummary, collections: Array.from({ length: 20 }, () => ({ path: "$.items", itemCount: 1, objectItemsSampled: 1, sampleSize: 1 })) },
+    }],
+  }), false);
+});
