@@ -54,6 +54,14 @@ test("page data analysis reports JSON collections and rendered table counts with
   assert.equal(result.analyzedResponses, 1);
   assert.deepEqual(result.collections.map((item) => [item.path, item.itemCount]), [["$.items", 2]]);
   assert.deepEqual(result.visibleTables, [{ index: 0, kind: "table", rowCount: 2, columnCount: 3 }]);
+  assert.deepEqual(result.candidateMatches, [{
+    requestId: "request-1",
+    collectionPath: "$.items",
+    apiItemCount: 2,
+    tableIndex: 0,
+    renderedRowCount: 2,
+    confidence: "heuristic",
+  }]);
   assert.match(result.note, /pagination, filtering/i);
 });
 
