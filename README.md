@@ -113,3 +113,11 @@ For large JSON responses, the agent can request only the fields it needs in the 
 `select` accepts field names or business concepts (for example `email`, `customer id`, `status`, `created date`, or `total`). The runtime resolves them against the response schema and returns compact items plus the matched paths. This is the normal agent workflow; the response-handle/schema helpers remain internal implementation details rather than separate agent tools.
 
 Selection is bounded to 32 requested fields, 100 returned items, and 32 KiB of extracted JSON. Non-JSON responses remain bounded text and are not schema-inspected. If the API response itself exceeds 256 KiB, the agent must use the CRM API's pagination mechanism instead of reconstructing the full dataset.
+
+## Optional framework and API data analyzers
+
+The inspector automatically checks whether a Vue runtime is detectable on the current page. Vue pages may return a bounded list of component names and counts when the runtime exposes its mounted component tree. Props, component state, and application data are never extracted. Pages without detectable Vue continue through the normal DOM inspection path; React is identified separately but is not introspected by the Vue analyzer.
+
+The API data analyzer adds schema-only summaries to network diagnostics for JSON responses: JSON root type, bounded field paths, array/collection sizes, parse status, and response size. It never copies JSON values into the summary. It also reports only row/column counts for visible HTML tables and ARIA grids. When a JSON object collection has the same item count as a rendered table, it reports a candidate correlation. This is only a heuristic—not proof that the API data feeds that table—and pagination, filtering, hidden rows, and client-side transformations can legitimately make counts differ.
+
+Both analyzers are enabled by default and can be disabled per inspection with `diagnostics.vueAnalyzer: false` or `diagnostics.dataAnalyzer: false`. Their output is bounded, and the ordinary inspection still works if Vue-specific introspection is unavailable.

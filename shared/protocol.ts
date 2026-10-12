@@ -197,6 +197,66 @@ export type InspectDiagnosticsSummary = {
   checkpoints: number;
 };
 
+export type ApiCollectionSummary = {
+  path: string;
+  itemCount: number;
+  objectItemsSampled: number;
+  sampleSize: number;
+};
+
+export type ApiPayloadSummary = {
+  status: "analyzed" | "not_json" | "invalid_json" | "truncated";
+  byteLength: number;
+  rootType?: "object" | "array" | "string" | "number" | "boolean" | "null";
+  topLevelKeys: string[];
+  fieldPaths: string[];
+  collections: ApiCollectionSummary[];
+  fieldPathsTruncated?: boolean;
+  collectionsTruncated?: boolean;
+  scanTruncated?: boolean;
+};
+
+export type PageTableSummary = {
+  index: number;
+  kind: "table" | "aria_grid";
+  rowCount: number;
+  columnCount: number;
+};
+
+export type DataCountMatch = {
+  requestId: string;
+  collectionPath: string;
+  apiItemCount: number;
+  tableIndex: number;
+  renderedRowCount: number;
+  confidence: "heuristic";
+};
+
+export type PageDataAnalysis = {
+  jsonResponses: number;
+  analyzedResponses: number;
+  invalidJsonResponses: number;
+  truncatedResponses: number;
+  collections: Array<ApiCollectionSummary & {
+    requestId: string;
+    status?: number;
+  }>;
+  visibleTables: PageTableSummary[];
+  candidateMatches: DataCountMatch[];
+  note: string;
+};
+
+export type VueAnalysis = {
+  framework: "vue" | "react" | "unknown";
+  status: "analyzed" | "detected_no_component_tree" | "not_applicable" | "not_detected";
+  version?: string;
+  detectionSignals: string[];
+  componentCount?: number;
+  componentNames?: string[];
+  componentNamesTruncated?: boolean;
+  scanTruncated?: boolean;
+};
+
 export type InspectNetworkRequest = {
   id: string;
   timestamp: string;
@@ -204,6 +264,7 @@ export type InspectNetworkRequest = {
   url: string;
   resourceType?: string;
   responseContentType?: string;
+  apiDataSummary?: ApiPayloadSummary;
   status?: number;
   statusText?: string;
   durationMs?: number;
@@ -238,6 +299,10 @@ export type InspectDiagnostics = {
   elementsMode?: "interactive" | "all";
   maxElements?: number;
   domSelector?: string;
+  /** Auto-detect Vue and report bounded component metadata; true by default. */
+  vueAnalyzer?: boolean;
+  /** Summarize JSON API response structure and visible table dimensions; true by default. */
+  dataAnalyzer?: boolean;
 };
 
 export type InspectError = {
@@ -268,6 +333,8 @@ export type InspectSuccess = {
   pageErrors: PageError[];
   requestFailures: RequestFailure[];
   networkRequests: InspectNetworkRequest[];
+  vueAnalysis?: VueAnalysis;
+  dataAnalysis?: PageDataAnalysis;
   securityEvents: SecurityEvent[];
   checkpoints?: InspectCheckpoint[];
   diagnosticsSummary: InspectDiagnosticsSummary;
@@ -601,6 +668,88 @@ function isRequestFailure(value: unknown): value is RequestFailure {
   );
 }
 
+function isBoundedStringArray(value: unknown, maxItems: number, maxLength: number): value is string[] {
+  return Array.isArray(value) && value.length <= maxItems &&
+    value.every((item) => typeof item === "string" && item.length <= maxLength);
+}
+
+function isApiCollectionSummary(value: unknown): value is ApiCollectionSummary {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  return typeof item.path === "string" && item.path.length > 0 && item.path.length <= 768 &&
+    isFiniteNonNegativeInteger(item.itemCount) &&
+    isFiniteNonNegativeInteger(item.objectItemsSampled) &&
+    isFiniteNonNegativeInteger(item.sampleSize) &&
+    item.objectItemsSampled <= item.sampleSize;
+}
+
+function isApiPayloadSummary(value: unknown): value is ApiPayloadSummary {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (!["analyzed", "not_json", "invalid_json", "truncated"].includes(String(item.status))) return false;
+  if (!isFiniteNonNegativeInteger(item.byteLength)) return false;
+  if (item.rootType !== undefined &&
+    !["object", "array", "string", "number", "boolean", "null"].includes(String(item.rootType))) return false;
+  if (!isBoundedStringArray(item.topLevelKeys, 32, 64) || !isBoundedStringArray(item.fieldPaths, 40, 768)) return false;
+  if (!Array.isArray(item.collections) || item.collections.length > 12 || !item.collections.every(isApiCollectionSummary)) return false;
+  for (const key of ["fieldPathsTruncated", "collectionsTruncated", "scanTruncated"]) {
+    if (item[key] !== undefined && typeof item[key] !== "boolean") return false;
+  }
+  return true;
+}
+
+function isVueAnalysis(value: unknown): value is VueAnalysis {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  if (!["vue", "react", "unknown"].includes(String(item.framework))) return false;
+  if (!["analyzed", "detected_no_component_tree", "not_applicable", "not_detected"].includes(String(item.status))) return false;
+  if (item.version !== undefined && (typeof item.version !== "string" || item.version.length > 40)) return false;
+  if (!isBoundedStringArray(item.detectionSignals, 8, 64)) return false;
+  if (item.componentCount !== undefined && !isFiniteNonNegativeInteger(item.componentCount)) return false;
+  if (item.componentNames !== undefined && !isBoundedStringArray(item.componentNames, 60, 80)) return false;
+  for (const key of ["componentNamesTruncated", "scanTruncated"]) {
+    if (item[key] !== undefined && typeof item[key] !== "boolean") return false;
+  }
+  return true;
+}
+
+function isPageTableSummary(value: unknown): value is PageTableSummary {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  return isFiniteNonNegativeInteger(item.index) &&
+    ["table", "aria_grid"].includes(String(item.kind)) &&
+    isFiniteNonNegativeInteger(item.rowCount) &&
+    isFiniteNonNegativeInteger(item.columnCount);
+}
+
+function isPageDataAnalysis(value: unknown): value is PageDataAnalysis {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  for (const key of ["jsonResponses", "analyzedResponses", "invalidJsonResponses", "truncatedResponses"]) {
+    if (!isFiniteNonNegativeInteger(item[key])) return false;
+  }
+  if (!Array.isArray(item.collections) || item.collections.length > 40) return false;
+  if (!item.collections.every((entry) => {
+    if (!isApiCollectionSummary(entry)) return false;
+    const collection = entry as ApiCollectionSummary & { requestId?: unknown; status?: unknown };
+    return typeof collection.requestId === "string" && collection.requestId.length <= 128 &&
+      (collection.status === undefined || (typeof collection.status === "number" && Number.isInteger(collection.status) && collection.status >= 0 && collection.status <= 999));
+  })) return false;
+  if (!Array.isArray(item.visibleTables) || item.visibleTables.length > 20 || !item.visibleTables.every(isPageTableSummary)) return false;
+  if (!Array.isArray(item.candidateMatches) || item.candidateMatches.length > 20) return false;
+  if (!item.candidateMatches.every((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const match = entry as Record<string, unknown>;
+    return typeof match.requestId === "string" && match.requestId.length <= 128 &&
+      typeof match.collectionPath === "string" && match.collectionPath.length > 0 && match.collectionPath.length <= 768 &&
+      isFiniteNonNegativeInteger(match.apiItemCount) &&
+      isFiniteNonNegativeInteger(match.tableIndex) &&
+      isFiniteNonNegativeInteger(match.renderedRowCount) &&
+      match.confidence === "heuristic";
+  })) return false;
+  return typeof item.note === "string" && item.note.length <= 512;
+}
+
 function isInspectNetworkRequest(value: unknown): value is InspectNetworkRequest {
   if(!value || typeof value!=="object") return false;
   const item=value as Record<string,unknown>;
@@ -608,6 +757,7 @@ function isInspectNetworkRequest(value: unknown): value is InspectNetworkRequest
   if(typeof item.timestamp!=="string" || typeof item.method!=="string" || typeof item.url!=="string") return false;
   if(item.resourceType!==undefined && typeof item.resourceType!=="string") return false;
   if(item.responseContentType!==undefined && typeof item.responseContentType!=="string") return false;
+  if(item.apiDataSummary!==undefined && !isApiPayloadSummary(item.apiDataSummary)) return false;
   if(item.status!==undefined && (typeof item.status!=="number" || !Number.isInteger(item.status) || item.status<0 || item.status>999)) return false;
   if(item.statusText!==undefined && typeof item.statusText!=="string") return false;
   if(item.durationMs!==undefined && !isFiniteNonNegativeInteger(item.durationMs)) return false;
@@ -634,6 +784,8 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if(!Array.isArray(value.networkRequests) || value.networkRequests.length>100 || !value.networkRequests.every(isInspectNetworkRequest)) return false;
   if(value.checkpoints!==undefined && (!Array.isArray(value.checkpoints) || value.checkpoints.length>12)) return false;
   if(!Array.isArray(value.securityEvents) || !value.securityEvents.every(isSecurityEvent)) return false;
+  if(value.vueAnalysis!==undefined && !isVueAnalysis(value.vueAnalysis)) return false;
+  if(value.dataAnalysis!==undefined && !isPageDataAnalysis(value.dataAnalysis)) return false;
   if(value.diagnosticsSummary!==undefined){
     const s=value.diagnosticsSummary as Record<string,unknown>;
     for(const key of ["actionCount","actionsPassed","assertionCount","assertionsPassed","failedAssertions","networkRequests","failedNetworkRequests","consoleErrors","pageErrors","checkpoints"]){

@@ -36,9 +36,13 @@ import type {
   InspectDiagnostics,
   InspectCheckpoint,
   InspectGeometry,
+  VueAnalysis,
+  PageDataAnalysis,
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 import { NetworkRecorder } from "./diagnostics.ts";
+import { analyzeVuePage } from "./analyzers/vue.ts";
+import { buildPageDataAnalysis, captureVisibleTableSummary } from "./analyzers/api.ts";
 import {
   InspectSubagentParametersSchema,
   MAX_INSPECT_ACTIONS,
@@ -1220,7 +1224,7 @@ async function inspectPage(
   let phase: InspectorPhase = "login";
   let collecting = false;
   let authenticationExpired = false;
-  const networkRecorder = new NetworkRecorder();
+  const networkRecorder = new NetworkRecorder(diagnostics.dataAnalyzer !== false);
 
   const securityAbort = new AbortController();
   const signal = combineSignals(externalSignal, securityAbort.signal);
@@ -1502,6 +1506,19 @@ async function inspectPage(
     if (authenticationExpired) {
       throw new Error("Authentication expired: CRM returned HTTP 401 during the authenticated inspection.");
     }
+    const networkRequests = networkRecorder.entriesSnapshot;
+    const vueAnalysis: VueAnalysis | undefined = diagnostics.vueAnalyzer === false
+      ? undefined
+      : await analyzeVuePage(mainPage).catch(() => ({
+          framework: "unknown" as const,
+          status: "not_detected" as const,
+          detectionSignals: [],
+        }));
+    const dataAnalysis: PageDataAnalysis | undefined = diagnostics.dataAnalyzer === false
+      ? undefined
+      : await captureVisibleTableSummary(mainPage)
+          .then((tables) => buildPageDataAnalysis(networkRequests, tables))
+          .catch(() => buildPageDataAnalysis(networkRequests, []));
     const finalAssertionsPassed = assertionResults.every((assertion) => assertion.ok);
     const localAssertionsPassed = interactions.every((interaction) => interaction.assertionsPassed !== false);
     const assertionsPassed = finalAssertionsPassed && localAssertionsPassed;
@@ -1537,7 +1554,9 @@ async function inspectPage(
       console: consoleEvents,
       pageErrors,
       requestFailures,
-      networkRequests: networkRecorder.entriesSnapshot,
+      networkRequests,
+      ...(vueAnalysis ? { vueAnalysis } : {}),
+      ...(dataAnalysis ? { dataAnalysis } : {}),
       checkpoints,
       diagnosticsSummary,
       securityEvents,
