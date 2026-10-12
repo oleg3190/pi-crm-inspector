@@ -176,9 +176,10 @@ export class NetworkRecorder {
     entry.failed = response.status() >= 400;
     const startedAt = this.startedAt.get(request);
     if (startedAt !== undefined) entry.durationMs = Math.max(0, Date.now() - startedAt);
-    const body = await readResponseBody(response);
+    const body = await readResponseBody(response, this.includeApiDataSummary);
     if (body.body !== undefined) entry.responseBody = body.body;
     if (body.truncated) entry.responseBodyTruncated = true;
+    if (body.apiDataSummary) entry.apiDataSummary = body.apiDataSummary;
   }
 
   onRequestFailed(request: Request, errorText: string): void {
