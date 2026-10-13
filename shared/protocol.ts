@@ -197,6 +197,57 @@ export type InspectDiagnosticsSummary = {
   checkpoints: number;
 };
 
+export type ApiFindingKind =
+  | "http_error"
+  | "network_failure"
+  | "slow_response"
+  | "invalid_json"
+  | "error_payload"
+  | "empty_success_payload"
+  | "schema_type_inconsistency"
+  | "ui_api_correlation";
+
+export type ApiFinding = {
+  id: string;
+  kind: ApiFindingKind;
+  severity: "info" | "warning" | "error";
+  confidence: "low" | "medium" | "high";
+  title: string;
+  endpoint?: string;
+  evidence: string[];
+  requestIds: string[];
+};
+
+export type ApiSchemaField = {
+  path: string;
+  types: string[];
+  nullable: boolean;
+};
+
+export type ApiEndpointAnalysis = {
+  endpoint: string;
+  method: string;
+  requestCount: number;
+  successCount: number;
+  failedCount: number;
+  statuses: number[];
+  avgDurationMs?: number;
+  maxDurationMs?: number;
+  contentTypes: string[];
+  schemaFields: ApiSchemaField[];
+  schemaTruncated?: boolean;
+};
+
+export type ApiAnalysis = {
+  analyzedRequests: number;
+  endpointCount: number;
+  endpoints: ApiEndpointAnalysis[];
+  findings: ApiFinding[];
+  omittedEndpointCount?: number;
+  omittedFindingCount?: number;
+  slowResponseThresholdMs: number;
+};
+
 export type InspectNetworkRequest = {
   id: string;
   timestamp: string;
@@ -271,6 +322,7 @@ export type InspectSuccess = {
   securityEvents: SecurityEvent[];
   checkpoints?: InspectCheckpoint[];
   diagnosticsSummary: InspectDiagnosticsSummary;
+  apiAnalysis?: ApiAnalysis;
   droppedEvents: number;
 };
 
