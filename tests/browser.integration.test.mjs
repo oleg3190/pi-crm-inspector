@@ -351,7 +351,10 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   await page.evaluate(() => {
     const canvas = document.querySelector("#chart");
     const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(70, 5, 20, 15);
     ctx.fillText("Иван Иванов", 5, 20);
+    window.__originalCanvasData = canvas.toDataURL();
   });
 
   await sanitizePageForScreenshot(page);
@@ -361,7 +364,12 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   assert.equal(await page.locator("#customer-input").inputValue(), "ipsum ipsum 77777");
   assert.equal(await page.locator("#customer").getAttribute("aria-label"), "ipsum ipsum ipsum");
   assert.equal(await page.locator("#avatar").evaluate((el) => getComputedStyle(el).visibility), "hidden");
-  assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "hidden");
+  assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "visible");
+  assert.equal(await page.locator("#chart").getAttribute("data-pi-crm-canvas-sanitized"), "placeholder");
+  assert.notEqual(
+    await page.locator("#chart").evaluate((el) => el.toDataURL()),
+    await page.evaluate(() => window.__originalCanvasData),
+  );
   assert.equal(await page.locator("#svg").evaluate((el) => getComputedStyle(el).visibility), "visible");
   assert.equal((await page.locator("#svg").textContent()).trim(), "ipsum ipsum");
   assert.equal(await page.locator("crm-secret-widget").evaluate((el) => getComputedStyle(el).visibility), "visible");
