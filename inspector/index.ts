@@ -39,6 +39,7 @@ import type {
 } from "../shared/protocol.ts";
 import { CUSTOM_PAGE_ID, normalizeCustomPath } from "../shared/protocol.ts";
 import { NetworkRecorder } from "./diagnostics.ts";
+import { analyzeApiTraffic } from "./api-analyzer.ts";
 import {
   InspectSubagentParametersSchema,
   MAX_INSPECT_ACTIONS,
@@ -1521,6 +1522,7 @@ async function inspectPage(
 
     const checkpoints = interactions.flatMap((interaction) => interaction.checkpoint ? [interaction.checkpoint] : []);
     const diagnosticsSummary = buildDiagnosticsSummary(interactions, assertionResults, checkpoints);
+    const apiAnalysis = analyzeApiTraffic(networkRecorder.entriesSnapshot, { interactions, assertions: assertionResults });
     const result: InspectSuccess = {
       status: "success",
       traceId,
@@ -1540,6 +1542,7 @@ async function inspectPage(
       networkRequests: networkRecorder.entriesSnapshot,
       checkpoints,
       diagnosticsSummary,
+      apiAnalysis,
       securityEvents,
       droppedEvents: droppedEvents + networkRecorder.dropped,
     };
