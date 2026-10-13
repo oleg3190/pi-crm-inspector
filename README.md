@@ -31,6 +31,12 @@ Assertion diagnostics return actualText, actualUrl, actualValue, computed style,
 diagnostics supports captureAfterEachAction, captureOnAssertionFailure, elementsMode, maxElements, and domSelector.
 An action-local assertion failure automatically captures a checkpoint by default.
 
+## Chart diagnostics
+
+The DOM snapshot recognizes ApexCharts' rendered SVG container and adds bounded structural metadata: rendered chart dimensions, series count, legend item count, and x/y-axis label counts. SVG chart elements remain visible in sanitized screenshots; text inside SVG is anonymized using the same text-sanitization rules as the rest of the page. Canvas pixels cannot be anonymized generically, so a readable 2D canvas is cleared and replaced with a neutral, synthetic plot before screenshot capture; non-2D canvases are hidden fail-closed. The DOM snapshot includes an explicit inspector-sanitization notice and per-element markers such as `sanitized-by-inspector="placeholder"`, `hidden-by-inspector`, and `text-sanitized-by-inspector="true"`. Agents must treat these as intentional inspector transformations, not application defects, while avoiding the unsupported conclusion that the original component is healthy. This preserves the chart's footprint, not its original series, labels, or values.
+
+This is rendered-DOM diagnostics, not a guarantee that the inspector can recover the chart's original raw dataset. If an agent needs exact series values, prefer an application-supported, read-only data endpoint or a deliberately exposed chart data contract rather than depending on Vue internals or ApexCharts private instance fields.
+
 ## Network diagnostics
 
 The inspector records the latest 100 authenticated requests with method, sanitized URL, resource type, status, duration, bounded request body, bounded response body, and failure text.

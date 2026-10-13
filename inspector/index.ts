@@ -362,7 +362,9 @@ export async function captureAccessibilityElements(page: Page, maxElements = MAX
 }
 export async function captureDomSnapshot(page: Page, selector = "body"): Promise<string> {
   const snapshot = await page.locator(selector).evaluate((root, options) => {
-    const lines: string[] = [];
+    const lines: string[] = [
+      "[INSPECTOR SANITIZATION NOTICE] This snapshot may contain intentionally anonymized or replaced content. Do not diagnose anonymized text, canvas placeholders, or inspector-hidden media as application defects. The marker identifies an inspector transformation; it does not prove the underlying component is healthy.",
+    ];
     let count = 0;
     const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
 
@@ -438,9 +440,40 @@ export async function captureDomSnapshot(page: Page, selector = "body"): Promise
         if (viewBox) attrs.push(`viewBox="${escape(viewBox.slice(0, 120))}"`);
       }
 
+      // ApexCharts renders most charts as SVG. Capture compact structural
+      // metadata so the agent can distinguish a chart from a generic SVG
+      // without relying on pixels or framework-private Vue component state.
+      if (element.matches(".apexcharts-canvas")) {
+        const svg = element.querySelector("svg.apexcharts-svg");
+        const series = element.querySelectorAll(".apexcharts-series");
+        const legendItems = element.querySelectorAll(".apexcharts-legend-text");
+        const categoryLabels = element.querySelectorAll(".apexcharts-xaxis-texts-g text");
+        const yAxisLabels = element.querySelectorAll(".apexcharts-yaxis-texts text");
+        attrs.push('chart="apexcharts"');
+        attrs.push(`series-count="${series.length}"`);
+        attrs.push(`legend-count="${legendItems.length}"`);
+        attrs.push(`x-label-count="${categoryLabels.length}"`);
+        attrs.push(`y-label-count="${yAxisLabels.length}"`);
+        if (svg) {
+          const chartRect = svg.getBoundingClientRect();
+          attrs.push(`chart-rendered="${Math.round(chartRect.width)}x${Math.round(chartRect.height)}"`);
+        }
+      }
+
       if (tag === "canvas") {
         const canvas = element as HTMLCanvasElement;
         attrs.push(`bitmap="${canvas.width}x${canvas.height}"`);
+        const sanitization = canvas.getAttribute("data-pi-crm-canvas-sanitized");
+        if (sanitization) attrs.push(`sanitized-by-inspector="${escape(sanitization)}"`);
+        if (canvas.getAttribute("data-pi-crm-canvas-hidden") === "true") attrs.push('hidden-by-inspector="true"');
+      }
+
+      if (tag === "svg" && element.getAttribute("data-pi-crm-svg-text-sanitized") === "true") {
+        attrs.push('text-sanitized-by-inspector="true"');
+      }
+
+      if (element.getAttribute("data-pi-crm-hidden-by-inspector")) {
+        attrs.push(`hidden-by-inspector="${escape(element.getAttribute("data-pi-crm-hidden-by-inspector") ?? "true")}"`);
       }
 
       if (tag === "img") {
@@ -1078,6 +1111,7 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
         if (ignoredTags.has(element.tagName)) continue;
 
         const tag = element.tagName.toLowerCase();
+        if (tag === "svg") element.setAttribute("data-pi-crm-svg-text-sanitized", "true");
         const formControl = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
         if ("value" in formControl && typeof formControl.value === "string") {
           try {
@@ -1097,11 +1131,48 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
           element.setAttribute("value", anonymizeText(element.getAttribute("value") ?? ""));
         }
 
-        if (tag.includes("-")) {
-          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
-        }
-
-        if (["IMG", "PICTURE", "CANVAS", "SVG", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
+        // SVG labels are sanitized as text nodes. Canvas pixels cannot be
+        // anonymized generically, so replace a 2D bitmap with a neutral chart
+        // placeholder before capture. Non-2D canvases are hidden fail-closed.
+        if (element instanceof HTMLCanvasElement) {
+          const canvas = element;
+          const context = canvas.getContext("2d");
+          if (context && canvas.width > 0 && canvas.height > 0) {
+            context.save();
+            context.setTransform(1, 0, 0, 1, 0, 0);
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            const width = canvas.width;
+            const height = canvas.height;
+            const left = Math.max(4, width * 0.08);
+            const right = Math.max(left + 1, width * 0.94);
+            const top = Math.max(4, height * 0.10);
+            const bottom = Math.max(top + 1, height * 0.88);
+            context.strokeStyle = "#c4cbd4";
+            context.lineWidth = Math.max(1, Math.min(width, height) * 0.008);
+            context.beginPath();
+            context.moveTo(left, top);
+            context.lineTo(left, bottom);
+            context.lineTo(right, bottom);
+            context.stroke();
+            context.strokeStyle = "#7c8a9a";
+            context.lineWidth = Math.max(1, Math.min(width, height) * 0.018);
+            context.beginPath();
+            context.moveTo(left + (right - left) * 0.08, bottom - (bottom - top) * 0.22);
+            context.lineTo(left + (right - left) * 0.34, bottom - (bottom - top) * 0.55);
+            context.lineTo(left + (right - left) * 0.58, bottom - (bottom - top) * 0.40);
+            context.lineTo(left + (right - left) * 0.88, bottom - (bottom - top) * 0.78);
+            context.stroke();
+            context.restore();
+            canvas.setAttribute("data-pi-crm-canvas-sanitized", "placeholder");
+            canvas.removeAttribute("data-pi-crm-canvas-hidden");
+            canvas.style.setProperty("visibility", "visible", "important");
+          } else {
+            canvas.setAttribute("data-pi-crm-canvas-hidden", "true");
+            canvas.setAttribute("data-pi-crm-hidden-by-inspector", "unsupported-canvas-context");
+            canvas.style.setProperty("visibility", "hidden", "important");
+          }
+        } else if (["IMG", "PICTURE", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
+          element.setAttribute("data-pi-crm-hidden-by-inspector", "screenshot-privacy-policy");
           (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
         }
 
@@ -1116,7 +1187,7 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
     style.textContent = [
       "*, *::before, *::after { background-image: none !important; }",
       "*::before, *::after { content: none !important; }",
-      "img, picture, canvas, svg, video, iframe, object, embed { visibility: hidden !important; }",
+      "img, picture, video, iframe, object, embed { visibility: hidden !important; }",
     ].join("\n");
     document.head?.appendChild(style);
   });

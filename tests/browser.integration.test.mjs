@@ -77,10 +77,14 @@ test("browser inspection handles server HTML and SPA-like delayed DOM updates", 
   assert.equal(button.name?.includes("Иван"), false);
   assert(elements.length > 0);
 
+  // SVG-based charts must remain visible after screenshot sanitization.
+  assert.equal(await page.locator("#sales-chart").evaluate((element) => getComputedStyle(element).visibility), "visible");
+
   const screenshot = await captureViewportScreenshot(page);
   assert.equal(screenshot.data.length > 0, true);
   assert.equal(screenshot.width, 900);
   assert.equal(screenshot.height, 600);
+  assert.equal(await page.locator("#sales-chart").evaluate((element) => getComputedStyle(element).visibility), "visible");
 });
 
 
@@ -347,7 +351,10 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   await page.evaluate(() => {
     const canvas = document.querySelector("#chart");
     const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(70, 5, 20, 15);
     ctx.fillText("Иван Иванов", 5, 20);
+    window.__originalCanvasData = canvas.toDataURL();
   });
 
   await sanitizePageForScreenshot(page);
@@ -357,9 +364,19 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   assert.equal(await page.locator("#customer-input").inputValue(), "ipsum ipsum 77777");
   assert.equal(await page.locator("#customer").getAttribute("aria-label"), "ipsum ipsum ipsum");
   assert.equal(await page.locator("#avatar").evaluate((el) => getComputedStyle(el).visibility), "hidden");
-  assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "hidden");
-  assert.equal(await page.locator("#svg").evaluate((el) => getComputedStyle(el).visibility), "hidden");
-  assert.equal(await page.locator("crm-secret-widget").evaluate((el) => getComputedStyle(el).visibility), "hidden");
+  assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "visible");
+  assert.equal(await page.locator("#chart").getAttribute("data-pi-crm-canvas-sanitized"), "placeholder");
+  const snapshot = await captureDomSnapshot(page);
+  assert.match(snapshot, /INSPECTOR SANITIZATION NOTICE/);
+  assert.match(snapshot, /sanitized-by-inspector="placeholder"/);
+  assert.notEqual(
+    await page.locator("#chart").evaluate((el) => el.toDataURL()),
+    await page.evaluate(() => window.__originalCanvasData),
+  );
+  assert.equal(await page.locator("#svg").evaluate((el) => getComputedStyle(el).visibility), "visible");
+  assert.equal((await page.locator("#svg").textContent()).trim(), "ipsum ipsum");
+  assert.equal(await page.locator("crm-secret-widget").evaluate((el) => getComputedStyle(el).visibility), "visible");
+  assert.equal((await page.locator("crm-secret-widget").textContent()).trim(), "ipsum ipsum");
   assert.equal(await page.locator("#background").evaluate((el) => getComputedStyle(el).backgroundImage), "none");
 
   const screenshot = await captureViewportScreenshot(page);
@@ -517,4 +534,57 @@ test("NetworkRecorder marks failed requests for AI diagnostics", async () => {
   recorder.onRequestFailed(request, "net::ERR_CONNECTION_RESET");
   assert.equal(recorder.entriesSnapshot[0].failed, true);
   assert.equal(recorder.entriesSnapshot[0].error, "net::ERR_CONNECTION_RESET");
+});
+
+
+test("ApexCharts SVG snapshots expose chart structure and screenshot sanitization preserves the plot", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+  });
+
+  const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+  await page.setContent(`
+    <!doctype html>
+    <html><body>
+      <div class="apexcharts-canvas" style="width:420px;height:260px">
+        <svg class="apexcharts-svg" width="420" height="260" viewBox="0 0 420 260">
+          <g class="apexcharts-inner apexcharts-graphical">
+            <g class="apexcharts-series">
+              <path class="apexcharts-line" d="M 10 100 L 80 60 L 150 80"></path>
+            </g>
+            <g class="apexcharts-xaxis-texts-g">
+              <text x="10" y="220">January</text>
+              <text x="80" y="220">February</text>
+            </g>
+            <g class="apexcharts-yaxis-texts">
+              <text x="5" y="100">100</text>
+              <text x="5" y="60">200</text>
+            </g>
+          </g>
+          <g class="apexcharts-legend">
+            <text class="apexcharts-legend-text">Revenue</text>
+          </g>
+        </svg>
+      </div>
+    </body></html>
+  `);
+
+  const snapshot = await captureDomSnapshot(page);
+  assert.match(snapshot, /chart="apexcharts"/);
+  assert.match(snapshot, /series-count="1"/);
+  assert.match(snapshot, /legend-count="1"/);
+  assert.match(snapshot, /x-label-count="2"/);
+  assert.match(snapshot, /y-label-count="2"/);
+  assert.match(snapshot, /chart-rendered="420x260"/);
+
+  await sanitizePageForScreenshot(page);
+  assert.equal(
+    await page.locator(".apexcharts-svg").evaluate((element) => getComputedStyle(element).visibility),
+    "visible",
+  );
+  assert.equal(
+    await page.locator(".apexcharts-canvas").evaluate((element) => getComputedStyle(element).visibility),
+    "visible",
+  );
 });
