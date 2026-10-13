@@ -37,6 +37,14 @@ The inspector records the latest 100 authenticated requests with method, sanitiz
 Request bodies are capped at 8 KiB; response bodies at about 1 KiB.
 Sensitive query parameters, credentials, authorization tokens, cookies, and common secret fields are redacted before the result is emitted. Network request/response bodies are anonymized only in the diagnostic copy: JSON keys and structure remain unchanged, booleans and nulls are preserved, identifier-like fields (`id`, `userId`, `document_id`, `idNumber`, etc.) retain their values, and other text/digits are replaced character-for-character so digit counts and payload shape remain stable. The actual browser request and response are never modified. Unparseable text is anonymized character-for-character; binary response bodies are not decoded.
 
+## API Data Analyzer
+
+Every successful browser inspection includes a framework-independent `apiAnalysis` summary derived from the captured network trace. It groups calls by HTTP method and normalized endpoint, summarizes statuses and latency, reports observed content types, and infers bounded JSON field paths/types from available non-truncated response bodies. Dynamic numeric/UUID path segments are normalized so repeated calls can be grouped.
+
+The analyzer emits evidence-backed findings for HTTP 4xx/5xx responses, requests that fail before an HTTP response, responses slower than 3 seconds, JSON parsing failures, error-shaped payloads returned with a successful status, empty JSON payloads, and fields whose types vary across observed responses. Empty payloads are informational rather than presumed bugs. If a UI interaction/assertion and API request fail in the same inspection, it reports a low-confidence correlation lead; co-occurrence does not prove causation. Findings include severity, confidence, evidence, and bounded request IDs, not raw response values.
+
+The summary is capped at 40 endpoints, 40 findings, and 32 schema fields per endpoint. Analysis is based on the latest captured requests and response bodies (responses are capped at about 1 KiB), so it describes observed evidence and does not claim a complete API contract. It works on Vue, React, and non-framework pages because it analyzes network results rather than framework internals.
+
 ## Output compaction
 
 Successful inspections default to visible interactive elements only, up to 40.
