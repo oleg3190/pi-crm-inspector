@@ -197,6 +197,57 @@ export type InspectDiagnosticsSummary = {
   checkpoints: number;
 };
 
+export type ApiFindingKind =
+  | "http_error"
+  | "network_failure"
+  | "slow_response"
+  | "invalid_json"
+  | "error_payload"
+  | "empty_success_payload"
+  | "schema_type_inconsistency"
+  | "ui_api_correlation";
+
+export type ApiFinding = {
+  id: string;
+  kind: ApiFindingKind;
+  severity: "info" | "warning" | "error";
+  confidence: "low" | "medium" | "high";
+  title: string;
+  endpoint?: string;
+  evidence: string[];
+  requestIds: string[];
+};
+
+export type ApiSchemaField = {
+  path: string;
+  types: string[];
+  nullable: boolean;
+};
+
+export type ApiEndpointAnalysis = {
+  endpoint: string;
+  method: string;
+  requestCount: number;
+  successCount: number;
+  failedCount: number;
+  statuses: number[];
+  avgDurationMs?: number;
+  maxDurationMs?: number;
+  contentTypes: string[];
+  schemaFields: ApiSchemaField[];
+  schemaTruncated?: boolean;
+};
+
+export type ApiAnalysis = {
+  analyzedRequests: number;
+  endpointCount: number;
+  endpoints: ApiEndpointAnalysis[];
+  findings: ApiFinding[];
+  omittedEndpointCount?: number;
+  omittedFindingCount?: number;
+  slowResponseThresholdMs: number;
+};
+
 export type InspectNetworkRequest = {
   id: string;
   timestamp: string;
@@ -271,6 +322,7 @@ export type InspectSuccess = {
   securityEvents: SecurityEvent[];
   checkpoints?: InspectCheckpoint[];
   diagnosticsSummary: InspectDiagnosticsSummary;
+  apiAnalysis?: ApiAnalysis;
   droppedEvents: number;
 };
 
@@ -618,6 +670,61 @@ function isInspectNetworkRequest(value: unknown): value is InspectNetworkRequest
   return true;
 }
 
+function isApiAnalysis(value: unknown): value is ApiAnalysis {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  if (!isFiniteNonNegativeInteger(item.analyzedRequests) || item.analyzedRequests > 100) return false;
+  if (!isFiniteNonNegativeInteger(item.endpointCount) || item.endpointCount > 100) return false;
+  if (!isFiniteNonNegativeInteger(item.slowResponseThresholdMs) || item.slowResponseThresholdMs === 0) return false;
+  if (!Array.isArray(item.endpoints) || item.endpoints.length > 40) return false;
+  if (!Array.isArray(item.findings) || item.findings.length > 40) return false;
+  for (const key of ["omittedEndpointCount", "omittedFindingCount"]) {
+    if (item[key] !== undefined && !isFiniteNonNegativeInteger(item[key])) return false;
+  }
+  const schemaTypes = ["array", "boolean", "number", "object", "string"];
+  for (const endpoint of item.endpoints) {
+    if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) return false;
+    const row = endpoint as Record<string, unknown>;
+    if (typeof row.endpoint !== "string" || row.endpoint.length === 0 || row.endpoint.length > 2048) return false;
+    if (typeof row.method !== "string" || row.method.length === 0 || row.method.length > 32) return false;
+    for (const key of ["requestCount", "successCount", "failedCount"]) {
+      if (!isFiniteNonNegativeInteger(row[key]) || (row[key] as number) > 100) return false;
+    }
+    if (!Array.isArray(row.statuses) || row.statuses.length > 100 ||
+      !row.statuses.every((status) => typeof status === "number" && Number.isInteger(status) && status >= 0 && status <= 999)) return false;
+    for (const key of ["avgDurationMs", "maxDurationMs"]) {
+      if (row[key] !== undefined && !isFiniteNonNegativeInteger(row[key])) return false;
+    }
+    if (!Array.isArray(row.contentTypes) || row.contentTypes.length > 100 ||
+      !row.contentTypes.every((type) => typeof type === "string" && type.length <= 100)) return false;
+    if (!Array.isArray(row.schemaFields) || row.schemaFields.length > 32) return false;
+    if (row.schemaTruncated !== undefined && typeof row.schemaTruncated !== "boolean") return false;
+    for (const field of row.schemaFields) {
+      if (!field || typeof field !== "object" || Array.isArray(field)) return false;
+      const schemaField = field as Record<string, unknown>;
+      if (typeof schemaField.path !== "string" || schemaField.path.length === 0 || schemaField.path.length > 512) return false;
+      if (!Array.isArray(schemaField.types) || schemaField.types.length > 5 ||
+        !schemaField.types.every((type) => typeof type === "string" && schemaTypes.includes(type))) return false;
+      if (typeof schemaField.nullable !== "boolean") return false;
+    }
+  }
+  for (const finding of item.findings) {
+    if (!finding || typeof finding !== "object" || Array.isArray(finding)) return false;
+    const row = finding as Record<string, unknown>;
+    if (typeof row.id !== "string" || row.id.length === 0 || row.id.length > 128) return false;
+    if (!["http_error", "network_failure", "slow_response", "invalid_json", "error_payload", "empty_success_payload", "schema_type_inconsistency", "ui_api_correlation"].includes(String(row.kind))) return false;
+    if (!["info", "warning", "error"].includes(String(row.severity))) return false;
+    if (!["low", "medium", "high"].includes(String(row.confidence))) return false;
+    if (typeof row.title !== "string" || row.title.length === 0 || row.title.length > 256) return false;
+    if (row.endpoint !== undefined && (typeof row.endpoint !== "string" || row.endpoint.length > 2048)) return false;
+    if (!Array.isArray(row.evidence) || row.evidence.length > 4 ||
+      !row.evidence.every((text) => typeof text === "string" && text.length <= 512)) return false;
+    if (!Array.isArray(row.requestIds) || row.requestIds.length > 10 ||
+      !row.requestIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 128)) return false;
+  }
+  return true;
+}
+
 function isCommonResultFields(value: Record<string, unknown>, requirePageText: boolean): boolean {
   if(!isPageId(value.pageId) || !isFiniteNonNegativeInteger(value.durationMs)) return false;
   if(requirePageText && (typeof value.pageText!=="string" || value.pageText.length>65_536)) return false;
@@ -628,6 +735,7 @@ function isCommonResultFields(value: Record<string, unknown>, requirePageText: b
   if(requirePageText && typeof value.assertionsPassed!=="boolean") return false;
   if(requirePageText && value.screenshot!==undefined && !isInspectScreenshot(value.screenshot)) return false;
   if(requirePageText && value.screenshotSuppressed!==undefined && value.screenshotSuppressed!=="sensitive_action") return false;
+  if (value.apiAnalysis !== undefined && !isApiAnalysis(value.apiAnalysis)) return false;
   if(!Array.isArray(value.console) || !value.console.every(isConsoleLog)) return false;
   if(!Array.isArray(value.pageErrors) || !value.pageErrors.every(isPageError)) return false;
   if(!Array.isArray(value.requestFailures) || !value.requestFailures.every(isRequestFailure)) return false;
