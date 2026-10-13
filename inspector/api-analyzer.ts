@@ -89,7 +89,7 @@ function normalizedEndpoint(value: string): string {
       })
       .join("/")
       .replace(/\/$/u, "") || "/";
-    return url.origin + path;
+    return (url.origin + path).slice(0, 2048);
   } catch {
     return "[invalid-url]";
   }
@@ -245,7 +245,7 @@ function finding(
     confidence,
     title,
     ...(endpoint ? { endpoint } : {}),
-    evidence: evidence.slice(0, MAX_EVIDENCE),
+    evidence: evidence.slice(0, MAX_EVIDENCE).map((item) => item.slice(0, 512)),
     requestIds: requests.slice(0, MAX_REQUEST_IDS).map((request) => request.id),
   };
 }
