@@ -77,10 +77,14 @@ test("browser inspection handles server HTML and SPA-like delayed DOM updates", 
   assert.equal(button.name?.includes("Иван"), false);
   assert(elements.length > 0);
 
+  // SVG-based charts must remain visible after screenshot sanitization.
+  assert.equal(await page.locator("#sales-chart").evaluate((element) => getComputedStyle(element).visibility), "visible");
+
   const screenshot = await captureViewportScreenshot(page);
   assert.equal(screenshot.data.length > 0, true);
   assert.equal(screenshot.width, 900);
   assert.equal(screenshot.height, 600);
+  assert.equal(await page.locator("#sales-chart").evaluate((element) => getComputedStyle(element).visibility), "visible");
 });
 
 
@@ -517,4 +521,57 @@ test("NetworkRecorder marks failed requests for AI diagnostics", async () => {
   recorder.onRequestFailed(request, "net::ERR_CONNECTION_RESET");
   assert.equal(recorder.entriesSnapshot[0].failed, true);
   assert.equal(recorder.entriesSnapshot[0].error, "net::ERR_CONNECTION_RESET");
+});
+
+
+test("ApexCharts SVG snapshots expose chart structure and screenshot sanitization preserves the plot", async (t) => {
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => {
+    await browser.close();
+  });
+
+  const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
+  await page.setContent(`
+    <!doctype html>
+    <html><body>
+      <div class="apexcharts-canvas" style="width:420px;height:260px">
+        <svg class="apexcharts-svg" width="420" height="260" viewBox="0 0 420 260">
+          <g class="apexcharts-inner apexcharts-graphical">
+            <g class="apexcharts-series">
+              <path class="apexcharts-line" d="M 10 100 L 80 60 L 150 80"></path>
+            </g>
+            <g class="apexcharts-xaxis-texts-g">
+              <text x="10" y="220">January</text>
+              <text x="80" y="220">February</text>
+            </g>
+            <g class="apexcharts-yaxis-texts">
+              <text x="5" y="100">100</text>
+              <text x="5" y="60">200</text>
+            </g>
+          </g>
+          <g class="apexcharts-legend">
+            <text class="apexcharts-legend-text">Revenue</text>
+          </g>
+        </svg>
+      </div>
+    </body></html>
+  `);
+
+  const snapshot = await captureDomSnapshot(page);
+  assert.match(snapshot, /chart="apexcharts"/);
+  assert.match(snapshot, /series-count="1"/);
+  assert.match(snapshot, /legend-count="1"/);
+  assert.match(snapshot, /x-label-count="2"/);
+  assert.match(snapshot, /y-label-count="2"/);
+  assert.match(snapshot, /chart-rendered="420x260"/);
+
+  await sanitizePageForScreenshot(page);
+  assert.equal(
+    await page.locator(".apexcharts-svg").evaluate((element) => getComputedStyle(element).visibility),
+    "visible",
+  );
+  assert.equal(
+    await page.locator(".apexcharts-canvas").evaluate((element) => getComputedStyle(element).visibility),
+    "visible",
+  );
 });
