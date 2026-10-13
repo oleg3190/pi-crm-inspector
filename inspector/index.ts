@@ -362,7 +362,9 @@ export async function captureAccessibilityElements(page: Page, maxElements = MAX
 }
 export async function captureDomSnapshot(page: Page, selector = "body"): Promise<string> {
   const snapshot = await page.locator(selector).evaluate((root, options) => {
-    const lines: string[] = [];
+    const lines: string[] = [
+      "[INSPECTOR SANITIZATION NOTICE] This snapshot may contain intentionally anonymized or replaced content. Do not diagnose anonymized text, canvas placeholders, or inspector-hidden media as application defects. The marker identifies an inspector transformation; it does not prove the underlying component is healthy.",
+    ];
     let count = 0;
     const ignoredTags = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
 
@@ -461,6 +463,17 @@ export async function captureDomSnapshot(page: Page, selector = "body"): Promise
       if (tag === "canvas") {
         const canvas = element as HTMLCanvasElement;
         attrs.push(`bitmap="${canvas.width}x${canvas.height}"`);
+        const sanitization = canvas.getAttribute("data-pi-crm-canvas-sanitized");
+        if (sanitization) attrs.push(`sanitized-by-inspector="${escape(sanitization)}"`);
+        if (canvas.getAttribute("data-pi-crm-canvas-hidden") === "true") attrs.push('hidden-by-inspector="true"');
+      }
+
+      if (tag === "svg" && element.getAttribute("data-pi-crm-svg-text-sanitized") === "true") {
+        attrs.push('text-sanitized-by-inspector="true"');
+      }
+
+      if (element.getAttribute("data-pi-crm-hidden-by-inspector")) {
+        attrs.push(`hidden-by-inspector="${escape(element.getAttribute("data-pi-crm-hidden-by-inspector") ?? "true")}"`);
       }
 
       if (tag === "img") {
@@ -1098,6 +1111,7 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
         if (ignoredTags.has(element.tagName)) continue;
 
         const tag = element.tagName.toLowerCase();
+        if (tag === "svg") element.setAttribute("data-pi-crm-svg-text-sanitized", "true");
         const formControl = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
         if ("value" in formControl && typeof formControl.value === "string") {
           try {
@@ -1150,11 +1164,15 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
             context.stroke();
             context.restore();
             canvas.setAttribute("data-pi-crm-canvas-sanitized", "placeholder");
+            canvas.removeAttribute("data-pi-crm-canvas-hidden");
             canvas.style.setProperty("visibility", "visible", "important");
           } else {
+            canvas.setAttribute("data-pi-crm-canvas-hidden", "true");
+            canvas.setAttribute("data-pi-crm-hidden-by-inspector", "unsupported-canvas-context");
             canvas.style.setProperty("visibility", "hidden", "important");
           }
         } else if (["IMG", "PICTURE", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
+          element.setAttribute("data-pi-crm-hidden-by-inspector", "screenshot-privacy-policy");
           (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
         }
 
