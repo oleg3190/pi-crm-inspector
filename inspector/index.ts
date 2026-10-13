@@ -438,6 +438,26 @@ export async function captureDomSnapshot(page: Page, selector = "body"): Promise
         if (viewBox) attrs.push(`viewBox="${escape(viewBox.slice(0, 120))}"`);
       }
 
+      // ApexCharts renders most charts as SVG. Capture compact structural
+      // metadata so the agent can distinguish a chart from a generic SVG
+      // without relying on pixels or framework-private Vue component state.
+      if (element.matches(".apexcharts-canvas")) {
+        const svg = element.querySelector("svg.apexcharts-svg");
+        const series = element.querySelectorAll(".apexcharts-series");
+        const legendItems = element.querySelectorAll(".apexcharts-legend-text");
+        const categoryLabels = element.querySelectorAll(".apexcharts-xaxis-texts-g text");
+        const yAxisLabels = element.querySelectorAll(".apexcharts-yaxis-texts text");
+        attrs.push('chart="apexcharts"');
+        attrs.push(`series-count="${series.length}"`);
+        attrs.push(`legend-count="${legendItems.length}"`);
+        attrs.push(`x-label-count="${categoryLabels.length}"`);
+        attrs.push(`y-label-count="${yAxisLabels.length}"`);
+        if (svg) {
+          const chartRect = svg.getBoundingClientRect();
+          attrs.push(`chart-rendered="${Math.round(chartRect.width)}x${Math.round(chartRect.height)}"`);
+        }
+      }
+
       if (tag === "canvas") {
         const canvas = element as HTMLCanvasElement;
         attrs.push(`bitmap="${canvas.width}x${canvas.height}"`);
@@ -1097,11 +1117,12 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
           element.setAttribute("value", anonymizeText(element.getAttribute("value") ?? ""));
         }
 
-        if (tag.includes("-")) {
-          (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
-        }
-
-        if (["IMG", "PICTURE", "CANVAS", "SVG", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
+        // SVG chart labels are text nodes and are anonymized above. Keep SVG
+        // visible so ApexCharts and other SVG-based visualizations survive
+        // screenshot sanitization. Canvas pixels cannot be anonymized safely,
+        // so canvas remains hidden unless a future renderer-specific sanitizer
+        // can scrub its bitmap without destroying the chart.
+        if (["IMG", "PICTURE", "CANVAS", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
           (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
         }
 
@@ -1116,7 +1137,7 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
     style.textContent = [
       "*, *::before, *::after { background-image: none !important; }",
       "*::before, *::after { content: none !important; }",
-      "img, picture, canvas, svg, video, iframe, object, embed { visibility: hidden !important; }",
+      "img, picture, canvas, video, iframe, object, embed { visibility: hidden !important; }",
     ].join("\n");
     document.head?.appendChild(style);
   });
