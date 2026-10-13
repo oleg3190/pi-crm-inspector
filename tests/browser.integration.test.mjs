@@ -366,6 +366,9 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   assert.equal(await page.locator("#avatar").evaluate((el) => getComputedStyle(el).visibility), "hidden");
   assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "visible");
   assert.equal(await page.locator("#chart").getAttribute("data-pi-crm-canvas-sanitized"), "placeholder");
+  const snapshot = await captureDomSnapshot(page);
+  assert.match(snapshot, /INSPECTOR SANITIZATION NOTICE/);
+  assert.match(snapshot, /sanitized-by-inspector="placeholder"/);
   assert.notEqual(
     await page.locator("#chart").evaluate((el) => el.toDataURL()),
     await page.evaluate(() => window.__originalCanvasData),
