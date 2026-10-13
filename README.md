@@ -33,7 +33,7 @@ An action-local assertion failure automatically captures a checkpoint by default
 
 ## Chart diagnostics
 
-The DOM snapshot recognizes ApexCharts' rendered SVG container and adds bounded structural metadata: rendered chart dimensions, series count, legend item count, and x/y-axis label counts. SVG chart elements remain visible in sanitized screenshots; text inside SVG is anonymized using the same text-sanitization rules as the rest of the page. Canvas bitmaps remain hidden because their pixels cannot be anonymized safely without renderer-specific support.
+The DOM snapshot recognizes ApexCharts' rendered SVG container and adds bounded structural metadata: rendered chart dimensions, series count, legend item count, and x/y-axis label counts. SVG chart elements remain visible in sanitized screenshots; text inside SVG is anonymized using the same text-sanitization rules as the rest of the page. Canvas pixels cannot be anonymized generically, so a readable 2D canvas is cleared and replaced with a neutral, synthetic plot before screenshot capture; non-2D canvases are hidden fail-closed. This preserves the chart's footprint, not its original series, labels, or values.
 
 This is rendered-DOM diagnostics, not a guarantee that the inspector can recover the chart's original raw dataset. If an agent needs exact series values, prefer an application-supported, read-only data endpoint or a deliberately exposed chart data contract rather than depending on Vue internals or ApexCharts private instance fields.
 
