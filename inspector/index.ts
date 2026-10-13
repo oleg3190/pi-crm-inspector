@@ -1117,12 +1117,44 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
           element.setAttribute("value", anonymizeText(element.getAttribute("value") ?? ""));
         }
 
-        // SVG chart labels are text nodes and are anonymized above. Keep SVG
-        // visible so ApexCharts and other SVG-based visualizations survive
-        // screenshot sanitization. Canvas pixels cannot be anonymized safely,
-        // so canvas remains hidden unless a future renderer-specific sanitizer
-        // can scrub its bitmap without destroying the chart.
-        if (["IMG", "PICTURE", "CANVAS", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
+        // SVG labels are sanitized as text nodes. Canvas pixels cannot be
+        // anonymized generically, so replace a 2D bitmap with a neutral chart
+        // placeholder before capture. Non-2D canvases are hidden fail-closed.
+        if (element instanceof HTMLCanvasElement) {
+          const canvas = element;
+          const context = canvas.getContext("2d");
+          if (context && canvas.width > 0 && canvas.height > 0) {
+            context.save();
+            context.setTransform(1, 0, 0, 1, 0, 0);
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            const width = canvas.width;
+            const height = canvas.height;
+            const left = Math.max(4, width * 0.08);
+            const right = Math.max(left + 1, width * 0.94);
+            const top = Math.max(4, height * 0.10);
+            const bottom = Math.max(top + 1, height * 0.88);
+            context.strokeStyle = "#c4cbd4";
+            context.lineWidth = Math.max(1, Math.min(width, height) * 0.008);
+            context.beginPath();
+            context.moveTo(left, top);
+            context.lineTo(left, bottom);
+            context.lineTo(right, bottom);
+            context.stroke();
+            context.strokeStyle = "#7c8a9a";
+            context.lineWidth = Math.max(1, Math.min(width, height) * 0.018);
+            context.beginPath();
+            context.moveTo(left + (right - left) * 0.08, bottom - (bottom - top) * 0.22);
+            context.lineTo(left + (right - left) * 0.34, bottom - (bottom - top) * 0.55);
+            context.lineTo(left + (right - left) * 0.58, bottom - (bottom - top) * 0.40);
+            context.lineTo(left + (right - left) * 0.88, bottom - (bottom - top) * 0.78);
+            context.stroke();
+            context.restore();
+            canvas.setAttribute("data-pi-crm-canvas-sanitized", "placeholder");
+            canvas.style.setProperty("visibility", "visible", "important");
+          } else {
+            canvas.style.setProperty("visibility", "hidden", "important");
+          }
+        } else if (["IMG", "PICTURE", "VIDEO", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName)) {
           (element as HTMLElement).style.setProperty("visibility", "hidden", "important");
         }
 
@@ -1137,7 +1169,7 @@ export async function sanitizePageForScreenshot(page: Page): Promise<void> {
     style.textContent = [
       "*, *::before, *::after { background-image: none !important; }",
       "*::before, *::after { content: none !important; }",
-      "img, picture, canvas, video, iframe, object, embed { visibility: hidden !important; }",
+      "img, picture, video, iframe, object, embed { visibility: hidden !important; }",
     ].join("\n");
     document.head?.appendChild(style);
   });
