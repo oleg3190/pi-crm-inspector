@@ -364,7 +364,8 @@ test("screenshot sanitization removes textual and visual CRM PII before pixels a
   assert.equal(await page.locator("#chart").evaluate((el) => getComputedStyle(el).visibility), "hidden");
   assert.equal(await page.locator("#svg").evaluate((el) => getComputedStyle(el).visibility), "visible");
   assert.equal((await page.locator("#svg").textContent()).trim(), "ipsum ipsum");
-  assert.equal(await page.locator("crm-secret-widget").evaluate((el) => getComputedStyle(el).visibility), "hidden");
+  assert.equal(await page.locator("crm-secret-widget").evaluate((el) => getComputedStyle(el).visibility), "visible");
+  assert.equal((await page.locator("crm-secret-widget").textContent()).trim(), "ipsum ipsum");
   assert.equal(await page.locator("#background").evaluate((el) => getComputedStyle(el).backgroundImage), "none");
 
   const screenshot = await captureViewportScreenshot(page);
